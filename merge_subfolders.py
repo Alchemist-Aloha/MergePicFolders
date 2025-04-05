@@ -35,6 +35,7 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
     ".webp",
+    ".heic"
 }
 THUMBNAIL_SIZE = QSize(128, 128)
 PREVIEW_AREA_MIN_WIDTH = 400
