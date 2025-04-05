@@ -325,7 +325,7 @@ class Worker(QThread):
             return
 
         try:
-            self.progress.emit(f"Finding preview image for '{folder_path.name}'...")
+            # self.progress.emit(f"Finding preview image for '{folder_path.name}'...")
 
             for item in folder_path.glob("*"):
                 if not self._is_running:
@@ -400,9 +400,10 @@ class Worker(QThread):
 class ImageFolderTool(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Image Folder Preview & Merge Tool v3 (PySide6)")
+        self.setWindowTitle("Image Folder Tool")
         self.setGeometry(100, 100, 1300, 800)
 
+        # Initialize state variables (same as before)
         self.current_root_folder = None
         self.image_files_in_preview = []
         self.worker_thread = None
@@ -415,141 +416,352 @@ class ImageFolderTool(QMainWindow):
         self.last_merged_sources = []
         self.last_merged_target = None
 
+        # Create the modern UI
+        self.setup_ui()
+        
+        # Apply the modern styling
+        self.apply_modern_style()
+        
+        # Set natural sort as the default
+        self.use_natural_sort = True
+
+    def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
 
-        top_panel = QWidget()
-        top_layout = QHBoxLayout(top_panel)
-        self.select_folder_button = QPushButton(
-            QIcon.fromTheme("folder-open"), " Select Root Folder"
-        )
+        # Modern header area
+        header = QWidget()
+        header.setObjectName("header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        app_title = QLabel("Image Folder Tool")
+        app_title.setObjectName("heading")
+        app_title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        
+        self.select_folder_button = QPushButton("Select Folder")
+        self.select_folder_button.setObjectName("select_button")
+        self.select_folder_button.setIcon(QIcon.fromTheme("folder-open"))
+        self.select_folder_button.setIconSize(QSize(24, 24))
+        self.select_folder_button.setFixedHeight(40)
         self.select_folder_button.clicked.connect(self.select_root_folder)
+        
+        header_layout.addWidget(app_title)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.select_folder_button)
+        
+        main_layout.addWidget(header)
+        
+        # Path display with modern look
+        path_frame = QFrame()
+        path_frame.setObjectName("panel")
+        path_layout = QHBoxLayout(path_frame)
+        
+        folder_icon = QLabel()
+        folder_icon_pixmap = QIcon.fromTheme("folder").pixmap(QSize(24, 24))
+        folder_icon.setPixmap(folder_icon_pixmap)
+        
         self.folder_label = QLabel("No folder selected.")
-        self.folder_label.setFont(QFont("SansSerif", 10))
+        self.folder_label.setFont(QFont("Segoe UI", 10))
         self.folder_label.setWordWrap(True)
-        top_layout.addWidget(self.select_folder_button)
-        top_layout.addWidget(self.folder_label, 1)
-        main_layout.addWidget(top_panel)
+        
+        path_layout.addWidget(folder_icon)
+        path_layout.addWidget(self.folder_label, 1)
+        
+        main_layout.addWidget(path_frame)
 
+        # Main content splitter - now with THREE panels horizontally
         splitter_main = QSplitter(Qt.Orientation.Horizontal)
+        splitter_main.setHandleWidth(2)
+        splitter_main.setChildrenCollapsible(False)
 
-        left_panel_widget = QWidget()
-        left_layout = QVBoxLayout(left_panel_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-
-        subfolder_group = QWidget()
-        subfolder_layout = QVBoxLayout(subfolder_group)
-        subfolder_layout.setContentsMargins(5, 5, 5, 5)
-
-        subfolder_title = QLabel("Subfolders (Click to Preview, Check to Merge)")
-        subfolder_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
-        subfolder_layout.addWidget(subfolder_title)
-
-        # Add a button to uncheck all items
-        subfolder_actions = QWidget()
-        subfolder_actions_layout = QHBoxLayout(subfolder_actions)
-        subfolder_actions_layout.setContentsMargins(0, 0, 0, 5)
+        # ==== LEFT PANEL - Subfolder selection ====
+        left_panel = QFrame()
+        left_panel.setObjectName("panel")
+        left_layout = QVBoxLayout(left_panel)
+        
+        # Header for subfolder section
+        subfolder_header = QWidget()
+        subfolder_header_layout = QHBoxLayout(subfolder_header)
+        subfolder_header_layout.setContentsMargins(0, 0, 0, 10)
+        
+        subfolder_title = QLabel("Subfolders")
+        subfolder_title.setObjectName("heading")
+        subfolder_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        
+        subfolder_header_layout.addWidget(subfolder_title)
+        left_layout.addWidget(subfolder_header)
+        
+        # Controls for subfolder list
+        controls_widget = QWidget()
+        controls_layout = QHBoxLayout(controls_widget)
+        controls_layout.setContentsMargins(0, 0, 0, 5)
         
         self.uncheck_all_button = QPushButton("Uncheck All")
         self.uncheck_all_button.setIcon(QIcon.fromTheme("edit-clear"))
         self.uncheck_all_button.clicked.connect(self.uncheck_all_subfolders)
-        subfolder_actions_layout.addWidget(self.uncheck_all_button)
         
-        # Add sort toggle button
         self.sort_toggle_button = QPushButton("Natural Sort: On")
         self.sort_toggle_button.setIcon(QIcon.fromTheme("view-sort"))
         self.sort_toggle_button.setCheckable(True)
-        self.sort_toggle_button.setChecked(True)  # Set to checked by default
+        self.sort_toggle_button.setChecked(True)
         self.sort_toggle_button.clicked.connect(self.toggle_folder_sort)
-        subfolder_actions_layout.addWidget(self.sort_toggle_button)
         
-        # Add a spacer to push the buttons to the left
-        subfolder_actions_layout.addStretch(1)
+        controls_layout.addWidget(self.uncheck_all_button)
+        controls_layout.addWidget(self.sort_toggle_button)
+        controls_layout.addStretch(1)
         
-        subfolder_layout.addWidget(subfolder_actions)
-
+        left_layout.addWidget(controls_widget)
+        
+        # Modern subfolder list - INCREASED ICON SIZE
         self.subfolder_list_widget = QListWidget()
-        self.subfolder_list_widget.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection
-        )
-        self.subfolder_list_widget.currentItemChanged.connect(
-            self.trigger_subfolder_preview
-        )
+        self.subfolder_list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.subfolder_list_widget.currentItemChanged.connect(self.trigger_subfolder_preview)
         self.subfolder_list_widget.itemChanged.connect(self.update_merge_button_state)
-        self.subfolder_list_widget.setIconSize(QSize(64, 64))
+        self.subfolder_list_widget.setIconSize(QSize(96, 96))  # Increased from 64x64
         
-        # Make checkboxes larger with a style sheet
-        self.subfolder_list_widget.setStyleSheet("""
-            QListWidget::indicator {
-                width: 20px;
-                height: 20px;
-            }
-        """)
+        left_layout.addWidget(self.subfolder_list_widget, 1)
         
-        subfolder_layout.addWidget(self.subfolder_list_widget, 1)
-
-        self.merge_button = QPushButton(
-            QIcon.fromTheme("document-save-as"), "Merge Checked Folders into New Folder"
-        )
+        # Merge button - make it stand out
+        self.merge_button = QPushButton("Merge Selected Folders")
+        self.merge_button.setObjectName("merge_button")
+        self.merge_button.setIcon(QIcon.fromTheme("document-save-as"))
+        self.merge_button.setIconSize(QSize(20, 20))
+        self.merge_button.setFixedHeight(48)
         self.merge_button.clicked.connect(self.confirm_and_start_merge_to_new)
         self.merge_button.setEnabled(False)
-        subfolder_layout.addWidget(self.merge_button)
+        left_layout.addWidget(self.merge_button)
 
-        left_layout.addWidget(subfolder_group, 1)
-
-        splitter_main.addWidget(left_panel_widget)
-
-        right_panel_widget = QWidget()
-        right_layout = QVBoxLayout(right_panel_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-
-        image_list_title = QLabel("Image Preview (Content of selected folder)")
-        image_list_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
-        right_layout.addWidget(image_list_title)
-
+        # ==== MIDDLE PANEL - Folder contents ====
+        middle_panel = QFrame()
+        middle_panel.setObjectName("panel")
+        middle_layout = QVBoxLayout(middle_panel)
+        
+        # Image list section
+        image_list_title = QLabel("Folder Contents")
+        image_list_title.setObjectName("heading")
+        image_list_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        middle_layout.addWidget(image_list_title)
+        
+        # Modern thumbnail view for images
         self.image_list_widget = QListWidget()
         self.image_list_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.image_list_widget.setIconSize(THUMBNAIL_SIZE)
         self.image_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.image_list_widget.setSpacing(8)
         self.image_list_widget.setWordWrap(True)
+        self.image_list_widget.setUniformItemSizes(True)
         self.image_list_widget.itemSelectionChanged.connect(self.show_large_preview)
-        right_layout.addWidget(self.image_list_widget, 1)
+        middle_layout.addWidget(self.image_list_widget, 1)
 
-        preview_area_title = QLabel("Selected Image Preview")
-        preview_area_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
-        right_layout.addWidget(preview_area_title)
-
-        self.image_path_label = QLabel("Select an image from the list above")
+        # ==== RIGHT PANEL - Preview ====
+        right_panel = QFrame()
+        right_panel.setObjectName("panel")
+        right_layout = QVBoxLayout(right_panel)
+        
+        # Preview section
+        preview_title = QLabel("Preview")
+        preview_title.setObjectName("heading")
+        preview_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        right_layout.addWidget(preview_title)
+        
+        self.image_path_label = QLabel("Select an image to preview")
         self.image_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_path_label.setWordWrap(True)
+        self.image_path_label.setFont(QFont("Segoe UI", 9))
         right_layout.addWidget(self.image_path_label)
-
+        
+        # Modern preview area
+        preview_frame = QFrame()
+        preview_frame.setObjectName("panel")
+        preview_layout = QVBoxLayout(preview_frame)
+        
         self.preview_label = QLabel("Image Preview")
+        self.preview_label.setObjectName("preview_label")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(PREVIEW_AREA_MIN_WIDTH, 200)
-        self.preview_label.setStyleSheet(
-            "QLabel { background-color : lightgray; border: 1px solid gray; }"
-        )
-
+        self.preview_label.setMinimumSize(PREVIEW_AREA_MIN_WIDTH, 250)
+        
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.preview_label)
-        right_layout.addWidget(scroll_area, 2)
-
-        splitter_main.addWidget(right_panel_widget)
-        splitter_main.setSizes([450, 850])
-
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        preview_layout.addWidget(scroll_area, 1)
+        
+        right_layout.addWidget(preview_frame, 1)
+        
+        # Add all three panels to splitter
+        splitter_main.addWidget(left_panel)
+        splitter_main.addWidget(middle_panel)
+        splitter_main.addWidget(right_panel)
+        
+        # Set initial sizes for the three panels - distribute proportionally
+        splitter_main.setSizes([300, 400, 300])  # Left, Middle, Right
+        
         main_layout.addWidget(splitter_main, 1)
-
+        
+        # Modern log area
+        log_title = QLabel("Activity Log")
+        log_title.setObjectName("heading")
+        log_title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        main_layout.addWidget(log_title)
+        
         self.log_edit = QTextEdit()
+        self.log_edit.setObjectName("log_edit")
         self.log_edit.setReadOnly(True)
-        self.log_edit.setFont(QFont("Monospace", 9))
+        self.log_edit.setFont(QFont("Consolas", 9))
         self.log_edit.setFixedHeight(100)
         main_layout.addWidget(self.log_edit)
 
-        # Set natural sort as the default
-        self.use_natural_sort = True
+    def apply_modern_style(self):
+        # Modern color palette
+        colors = {
+            "primary": "#50FA7B",
+            "primary_hover": "#2bbd50",
+            "secondary": "#FF79C6",
+            "secondary_hover": "#D44C9A",
+            "background": "#282A36",
+            "card": "#44475A",
+            "text": "#F8F8F2",
+            "text_light": "#F8F8F2",
+            "border": "#e0e0e0",
+            "danger": "#FF5555"
+        }
+        
+        self.setStyleSheet(f"""
+            /* Global app styling */
+            QMainWindow, QDialog {{
+                background-color: {colors["background"]};
+                color: {colors["text"]};
+            }}
+            
+            /* Buttons */
+            QPushButton {{
+                background-color: {colors["primary"]};
+                color: #F8F8F2;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {colors["primary_hover"]};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {colors["primary_hover"]};
+                padding: 7px 11px 5px 13px;
+            }}
+            
+            QPushButton:disabled {{
+                background-color: #bdc3c7;
+                color: #95a5a6;
+            }}
+            
+            /* Special buttons (like merge) */
+            QPushButton#merge_button {{
+                background-color: {colors["secondary"]};
+                color: #F8F8F2;
+            }}
+            
+            QPushButton#merge_button:hover {{
+                background-color: {colors["secondary_hover"]};
+            }}
+            
+            /* List widgets */
+            QListWidget {{
+                background-color: {colors["card"]};
+                border-radius: 6px;
+                border: 1px solid {colors["border"]};
+                padding: 2px;
+            }}
+            
+            QListWidget::item {{
+                border-radius: 2px;
+                padding: 4px;
+                margin: 2px;
+            }}
+            
+            QListWidget::item:selected {{
+                background-color: {colors["primary"]};
+                color: #F8F8F2;
+            }}
+            
+            QListWidget::item:hover:!selected {{
+                background-color: #ecf0f1;
+            }}
+            
+            /* Checkbox style in list */
+            QListWidget::indicator {{
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                border: 2px solid {colors["primary"]};
+            }}
+            
+            QListWidget::indicator:checked {{
+                background-color: {colors["primary"]};
+                image: url(checkmark.png);
+            }}
+            
+            /* Panels and group boxes */
+            QGroupBox, QFrame#panel {{
+                background-color: {colors["card"]};
+                border-radius: 8px;
+                border: 1px solid {colors["border"]};
+                margin-top: 8px;
+            }}
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px 0 3px;
+                color: {colors["primary"]};
+            }}
+            
+            /* Scrollbars */
+            QScrollBar:vertical {{
+                border: none;
+                background-color: {colors["background"]};
+                width: 8px;
+                margin: 0px;
+            }}
+            
+            QScrollBar::handle:vertical {{
+                background-color: #bdc3c7;
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            
+            QScrollBar::handle:vertical:hover {{
+                background-color: #95a5a6;
+            }}
+            
+            /* Labels */
+            QLabel#heading {{
+                font-size: 12pt;
+                font-weight: bold;
+                color: {colors["primary"]};
+            }}
+            
+            /* Preview area */
+            QLabel#preview_label {{
+                background-color: {colors["background"]};
+                border-radius: 6px;
+                color: white;
+            }}
+            
+            /* Log area */
+            QTextEdit#log_edit {{
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border-radius: 6px;
+                font-family: "Consolas", monospace;
+            }}
+        """)
 
     @Slot(str)
     def log_message(self, message):
