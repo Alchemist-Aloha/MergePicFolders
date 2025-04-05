@@ -3,6 +3,7 @@ import os
 import shutil
 from pathlib import Path
 import time  # For unique naming fallback
+import re  # Add this to the imports at the top of the file
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -444,6 +445,29 @@ class ImageFolderTool(QMainWindow):
         subfolder_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
         subfolder_layout.addWidget(subfolder_title)
 
+        # Add a button to uncheck all items
+        subfolder_actions = QWidget()
+        subfolder_actions_layout = QHBoxLayout(subfolder_actions)
+        subfolder_actions_layout.setContentsMargins(0, 0, 0, 5)
+        
+        self.uncheck_all_button = QPushButton("Uncheck All")
+        self.uncheck_all_button.setIcon(QIcon.fromTheme("edit-clear"))
+        self.uncheck_all_button.clicked.connect(self.uncheck_all_subfolders)
+        subfolder_actions_layout.addWidget(self.uncheck_all_button)
+        
+        # Add sort toggle button
+        self.sort_toggle_button = QPushButton("Natural Sort: On")
+        self.sort_toggle_button.setIcon(QIcon.fromTheme("view-sort"))
+        self.sort_toggle_button.setCheckable(True)
+        self.sort_toggle_button.setChecked(True)  # Set to checked by default
+        self.sort_toggle_button.clicked.connect(self.toggle_folder_sort)
+        subfolder_actions_layout.addWidget(self.sort_toggle_button)
+        
+        # Add a spacer to push the buttons to the left
+        subfolder_actions_layout.addStretch(1)
+        
+        subfolder_layout.addWidget(subfolder_actions)
+
         self.subfolder_list_widget = QListWidget()
         self.subfolder_list_widget.setSelectionMode(
             QAbstractItemView.SelectionMode.NoSelection
@@ -453,6 +477,15 @@ class ImageFolderTool(QMainWindow):
         )
         self.subfolder_list_widget.itemChanged.connect(self.update_merge_button_state)
         self.subfolder_list_widget.setIconSize(QSize(64, 64))
+        
+        # Make checkboxes larger with a style sheet
+        self.subfolder_list_widget.setStyleSheet("""
+            QListWidget::indicator {
+                width: 20px;
+                height: 20px;
+            }
+        """)
+        
         subfolder_layout.addWidget(self.subfolder_list_widget, 1)
 
         self.merge_button = QPushButton(
@@ -514,6 +547,9 @@ class ImageFolderTool(QMainWindow):
         self.log_edit.setFixedHeight(100)
         main_layout.addWidget(self.log_edit)
 
+        # Set natural sort as the default
+        self.use_natural_sort = True
+
     @Slot(str)
     def log_message(self, message):
         timestamp = time.strftime("%H:%M:%S")
@@ -545,12 +581,84 @@ class ImageFolderTool(QMainWindow):
         if self.worker_thread == original_worker:
             self.worker_thread = None
             self.current_task_type = None
-            self.enable_ui(True)
+            # Enable UI only after potential list update
 
         if task_type == "merge_subs":
-            self.log_message("Refreshing subfolder list...")
-            self.clear_preview_area()
-            self.populate_subfolder_list()
+            self.log_message("Updating subfolder list after merge...")
+            self.clear_preview_area()  # Still clear the image preview
+
+            # --- Temporarily disconnect signal ---
+            try:
+                self.subfolder_list_widget.currentItemChanged.disconnect(
+                    self.trigger_subfolder_preview
+                )
+            except RuntimeError:  # Already disconnected or never connected
+                pass
+            # ------------------------------------
+
+            if success and self.last_merged_target and self.last_merged_sources:
+                # Remove source items
+                items_to_remove = []
+                source_paths_set = set(self.last_merged_sources)
+                for index in range(self.subfolder_list_widget.count()):
+                    item = self.subfolder_list_widget.item(index)
+                    if item:
+                        item_data = item.data(Qt.ItemDataRole.UserRole)
+                        if item_data in source_paths_set:
+                            items_to_remove.append(item)
+
+                for item in items_to_remove:
+                    row = self.subfolder_list_widget.row(item)
+                    self.subfolder_list_widget.takeItem(row)
+                    # Also remove from thumbnail cache if present
+                    folder_path_str = str(item.data(Qt.ItemDataRole.UserRole))
+                    if folder_path_str in self.folder_preview_cache:
+                        del self.folder_preview_cache[folder_path_str]
+                    if folder_path_str in self.folder_preview_tasks:
+                        # Stop any preview task for the removed folder
+                        preview_worker = self.folder_preview_tasks.pop(folder_path_str)
+                        if preview_worker and preview_worker.isRunning():
+                            preview_worker.stop()
+
+                # Add target item (if it's directly under the root)
+                if self.last_merged_target.parent == self.current_root_folder:
+                    target_item = QListWidgetItem(self.last_merged_target.name)
+                    target_item.setData(
+                        Qt.ItemDataRole.UserRole, self.last_merged_target
+                    )
+                    target_item.setIcon(QIcon.fromTheme("folder"))
+                    target_item.setFlags(
+                        target_item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    target_item.setCheckState(Qt.CheckState.Unchecked)
+                    self.subfolder_list_widget.addItem(target_item)
+                    # Optionally request its thumbnail immediately
+                    self.request_folder_preview(self.last_merged_target, target_item)
+
+                # Sort the list according to current sort mode instead of default
+                self.sort_subfolder_list()  # This modifies the list heavily
+
+                self.log_message("Subfolder list updated.")
+            elif not success:
+                self.log_message(
+                    "Merge failed or cancelled. List not updated, consider refreshing manually if needed."
+                )
+            else:
+                self.log_message(
+                    "Merge completed but source/target info missing. Refreshing list fully."
+                )
+                self.populate_subfolder_list()  # Fallback to full refresh
+
+            # Clear the stored paths
+            self.last_merged_sources = []
+            self.last_merged_target = None
+            self.update_merge_button_state()  # Update button state
+
+            # --- Reconnect signal ---
+            self.subfolder_list_widget.currentItemChanged.connect(
+                self.trigger_subfolder_preview
+            )
+            # ------------------------
 
         elif task_type == "scan_subfolder_images":
             if success:
@@ -570,6 +678,14 @@ class ImageFolderTool(QMainWindow):
         elif task_type == "populate_subfolders":
             if not success:
                 self.log_message("Failed to populate subfolders.")
+
+        # Re-enable UI at the very end, after potential list updates
+        if self.worker_thread != original_worker:  # Check again in case a new task started
+            self.enable_ui(True)
+
+        # Final UI enable check if no worker is running
+        if self.worker_thread is None:
+            self.enable_ui(True)
 
     @Slot(bool)
     def enable_ui(self, enabled):
@@ -656,7 +772,13 @@ class ImageFolderTool(QMainWindow):
         count = 0
         folders_needing_thumbnails = []
         try:
-            for subdir in sorted(subdirs, key=lambda p: p.name):
+            # Sort subdirs based on current sort mode
+            if self.use_natural_sort:
+                subdirs.sort(key=lambda p: self._natural_sort_key(p.name))
+            else:
+                subdirs.sort(key=lambda p: p.name)
+                
+            for subdir in subdirs:
                 item = QListWidgetItem(subdir.name)
                 item.setData(Qt.ItemDataRole.UserRole, subdir)
                 item.setIcon(QIcon.fromTheme("folder"))
@@ -722,7 +844,7 @@ class ImageFolderTool(QMainWindow):
 
     def request_folder_preview(self, folder_path, list_item):
         try:
-            if not folder_path or not folder_path.is_dir():
+            if not folder_path or not list_item or not folder_path.is_dir():
                 return
 
             folder_path_str = str(folder_path)
@@ -732,6 +854,9 @@ class ImageFolderTool(QMainWindow):
                     self.set_folder_thumbnail(folder_path_str, cached_path)
                     return
 
+            if folder_path_str in self.folder_preview_tasks:
+                # Skip if a preview task is already running for this folder
+                return
             max_workers = 2
             if len(self.folder_preview_tasks) >= max_workers:
                 self.waiting_folders.append((folder_path, list_item))
@@ -1046,6 +1171,10 @@ class ImageFolderTool(QMainWindow):
                 )
                 return
 
+            # Store paths before starting task
+            self.last_merged_sources = list(source_folders)  # Store a copy
+            self.last_merged_target = target_folder_path
+
             source_paths_str = [str(p) for p in source_folders]
             target_path_str = str(target_folder_path)
             self.start_merge_task(source_paths_str, target_path_str)
@@ -1071,11 +1200,12 @@ class ImageFolderTool(QMainWindow):
             task = self.current_task_type or "unknown task"
             self.log_message(f"Attempting to cancel {task}...")
             worker_to_stop.stop()
-            if not worker_to_stop.wait(1500):
-                self.log_message(
-                    f"Warning: Worker thread ({task}) did not stop gracefully. Terminating."
-                )
+            
+            # Wait longer for thread to finish naturally
+            if not worker_to_stop.wait(2000):  # Increase timeout to 2 seconds
+                self.log_message(f"Warning: Worker thread ({task}) did not stop gracefully. Terminating.")
                 worker_to_stop.terminate()
+                # Always wait again after terminate()
                 worker_to_stop.wait()
 
             if self.worker_thread == worker_to_stop:
@@ -1086,15 +1216,102 @@ class ImageFolderTool(QMainWindow):
             else:
                 self.log_message(f"Stopped an older worker for task {task}.")
 
+    @Slot()
+    def uncheck_all_subfolders(self):
+        """Uncheck all items in the subfolder list."""
+        for index in range(self.subfolder_list_widget.count()):
+            item = self.subfolder_list_widget.item(index)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                item.setCheckState(Qt.CheckState.Unchecked)
+        
+        # Clear the checked names cache
+        self._checked_folder_names_cache.clear()
+        self.log_message("All folders unchecked.")
+        self.update_merge_button_state()  # Update button state after changes
+
+    @Slot()
+    def toggle_folder_sort(self):
+        """Toggle between natural and alphabetical sorting."""
+        self.use_natural_sort = self.sort_toggle_button.isChecked()
+        self.sort_toggle_button.setText(f"Natural Sort: {'On' if self.use_natural_sort else 'Off'}")
+        self.log_message(f"Sorting mode: {'Natural' if self.use_natural_sort else 'Alphabetical'}")
+        self.sort_subfolder_list()
+    
+    def sort_subfolder_list(self):
+        """Sort the subfolder list based on the current sort mode."""
+        # Store the current selection and checked state
+        current_item = self.subfolder_list_widget.currentItem()
+        current_path = current_item.data(Qt.ItemDataRole.UserRole) if current_item else None
+        
+        checked_items = {}
+        for index in range(self.subfolder_list_widget.count()):
+            item = self.subfolder_list_widget.item(index)
+            if item:
+                folder_path = item.data(Qt.ItemDataRole.UserRole)
+                checked_items[str(folder_path)] = item.checkState() == Qt.CheckState.Checked
+        
+        # Get all items
+        items = []
+        for index in range(self.subfolder_list_widget.count()):
+            item = self.subfolder_list_widget.takeItem(0)  # Always take from index 0
+            if item:
+                items.append(item)
+        
+        # Sort items
+        if self.use_natural_sort:
+            # Natural sort that handles numbers in folder names
+            items.sort(key=lambda x: self._natural_sort_key(x.text()))
+        else:
+            # Regular alphabetical sort
+            items.sort(key=lambda x: x.text().lower())
+        
+        # Re-add items in sorted order
+        for item in items:
+            self.subfolder_list_widget.addItem(item)
+            # Restore checked state
+            folder_path = item.data(Qt.ItemDataRole.UserRole)
+            if str(folder_path) in checked_items and checked_items[str(folder_path)]:
+                item.setCheckState(Qt.CheckState.Checked)
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+        
+        # Restore current selection only if we had one
+        if current_path:
+            for index in range(self.subfolder_list_widget.count()):
+                item = self.subfolder_list_widget.item(index)
+                if item and item.data(Qt.ItemDataRole.UserRole) == current_path:
+                    self.subfolder_list_widget.setCurrentItem(item)
+                    break
+    
+    def _natural_sort_key(self, text):
+        """
+        Natural sort key function that handles numbers within text.
+        For example: "folder10" will come after "folder2" in a natural sort.
+        """
+        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+
     def closeEvent(self, event):
+        # First stop the main worker
         self.stop_worker_thread()
 
-        for worker in self.folder_preview_tasks.values():
+        # Then stop all preview tasks with proper logging
+        active_preview_tasks = list(self.folder_preview_tasks.items())
+        for folder_path, worker in active_preview_tasks:
             if worker and worker.isRunning():
+                self.log_message(f"Stopping preview task for {Path(folder_path).name}...")
                 worker.stop()
-                worker.wait(100)
+                # Wait longer during shutdown
+                if not worker.wait(500):  # 500ms per thread
+                    worker.terminate()
+                    worker.wait()
+                self.folder_preview_tasks.pop(folder_path, None)
 
+        # Clear all remaining tasks
         self.folder_preview_tasks.clear()
+        self.waiting_folders.clear()
+        
+        # Log application shutdown
+        self.log_message("Application shutting down")
         event.accept()
 
 
