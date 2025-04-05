@@ -46,6 +46,7 @@ class Worker(QThread):
     error = Signal(str)
     image_paths = Signal(list)
     folder_preview_image = Signal(str, str)  # New signal: folder_path, image_path
+    subfolders_found = Signal(list)  # Signal to emit found subdirectories
 
     # Use keyword arguments for flexibility
     def __init__(
@@ -55,11 +56,13 @@ class Worker(QThread):
         folder_to_scan=None,
         source_folder_paths=None,
         target_folder_path=None,
+        root_folder_to_scan=None,  # Added for populate task
         parent=None,
     ):
         super().__init__(parent)
         self.task_type = task_type
         self.folder_to_scan = Path(folder_to_scan) if folder_to_scan else None
+        self.root_folder_to_scan = Path(root_folder_to_scan) if root_folder_to_scan else None  # Store root folder
         self.source_merge_folders = (
             [Path(p) for p in source_folder_paths] if source_folder_paths else []
         )
@@ -79,6 +82,9 @@ class Worker(QThread):
             elif self.task_type == "get_folder_preview" and self.folder_to_scan:
                 self._get_folder_preview_image(self.folder_to_scan)
                 self._success = True
+            elif self.task_type == "populate_subfolders" and self.root_folder_to_scan:  # Handle new task
+                self._populate_subfolders(self.root_folder_to_scan)
+                self._success = True
             elif (
                 self.task_type == "merge_subs"
                 and self.target_merge_folder
@@ -95,6 +101,11 @@ class Worker(QThread):
                     and not self.folder_to_scan
                 ):
                     self.error.emit("Scan task started with no folder provided.")
+                elif (
+                    self.task_type == "populate_subfolders"
+                    and not self.root_folder_to_scan  # Check for root folder
+                ):
+                    self.error.emit("Populate task started with no root folder provided.")
                 elif self.task_type == "merge_subs" and (
                     not self.target_merge_folder or not self.source_merge_folders
                 ):
@@ -255,8 +266,6 @@ class Worker(QThread):
             # --- Optional Deletion of Empty Source Folders ---
             self.progress.emit("Checking source folders for deletion...")
             for source_folder in processed_sources:
-                # (Deletion logic remains the same as previous version)
-                # ... [omitted for brevity, but it's the same os.walk bottom-up check] ...
                 if not self._is_running:
                     break
                 try:
@@ -294,18 +303,16 @@ class Worker(QThread):
                 self.progress.emit(
                     f"Merge partially complete. Moved {moved_count} files, **skipped {skipped_count} due to errors/naming conflicts**. Processed {len(processed_sources)} sources, deleted {deleted_source_dirs} empty source folders."
                 )
-                # Mark overall success as False if files were skipped
                 self._success = False
             else:
                 self.progress.emit(
                     f"Merge complete. Moved {moved_count} files. Processed {len(processed_sources)} sources, deleted {deleted_source_dirs} empty source folders."
                 )
-                self._success = True  # Mark success only if no skips
+                self._success = True
 
         except Exception as e:
             self.error.emit(f"Error during merging process: {e}")
-            self._success = False  # Ensure failure is marked on exception
-            # No need to re-raise, error is emitted
+            self._success = False
 
     def _get_folder_preview_image(self, folder_path):
         """Finds the first image in a folder to use as a preview thumbnail."""
@@ -318,16 +325,12 @@ class Worker(QThread):
         try:
             self.progress.emit(f"Finding preview image for '{folder_path.name}'...")
 
-            # First try to find an image directly in this folder (not recursive)
             for item in folder_path.glob("*"):
                 if not self._is_running:
                     return
                 if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                    # Add explicit checks for file existence and accessibility
                     try:
-                        if (
-                            os.path.getsize(str(item)) > 0
-                        ):  # Make sure file is not empty
+                        if os.path.getsize(str(item)) > 0:
                             self.folder_preview_image.emit(str(folder_path), str(item))
                             return
                     except (OSError, PermissionError) as e:
@@ -336,8 +339,7 @@ class Worker(QThread):
                         )
                         continue
 
-            # If no image found, search recursively but limited depth
-            max_depth = 2  # Only go 2 levels deep at most
+            max_depth = 2
             for depth in range(1, max_depth + 1):
                 pattern = "/".join(["*"] * depth)
                 for item in folder_path.glob(pattern):
@@ -347,7 +349,6 @@ class Worker(QThread):
                         item.is_file()
                         and item.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
                     ):
-                        # Add the same file validation here
                         try:
                             if os.path.getsize(str(item)) > 0:
                                 self.folder_preview_image.emit(
@@ -360,11 +361,37 @@ class Worker(QThread):
                             )
                             continue
 
-            # No image found
             self.progress.emit(f"No preview image found for '{folder_path.name}'")
 
         except Exception as e:
             self.error.emit(f"Error finding preview for '{folder_path.name}': {e}")
+
+    def _populate_subfolders(self, root_folder_path):
+        """Scans the root folder for immediate subdirectories."""
+        if not root_folder_path.is_dir():
+            self.error.emit(
+                f"Cannot populate: '{root_folder_path.name}' is not a valid directory."
+            )
+            return
+
+        try:
+            self.progress.emit(f"Scanning '{root_folder_path.name}' for subfolders...")
+            subdirs = []
+            for item in root_folder_path.iterdir():
+                if not self._is_running:
+                    self.progress.emit("Subfolder scan cancelled.")
+                    return
+                if item.is_dir():
+                    subdirs.append(item)
+
+            if self._is_running:
+                self.subfolders_found.emit(subdirs)
+                self.progress.emit(f"Found {len(subdirs)} subfolders.")
+        except Exception as e:
+            self.error.emit(
+                f"Error during subfolder scan of '{root_folder_path.name}': {e}"
+            )
+            raise
 
 
 # --- Main Application Window ---
@@ -374,23 +401,20 @@ class ImageFolderTool(QMainWindow):
         self.setWindowTitle("Image Folder Preview & Merge Tool v3 (PySide6)")
         self.setGeometry(100, 100, 1300, 800)
 
-        # --- State Variables ---
         self.current_root_folder = None
-        # Removed self.target_subfolder
-        self.image_files_in_preview = []  # Tracks images currently shown
+        self.image_files_in_preview = []
         self.worker_thread = None
         self.current_task_type = None
-        self.last_previewed_folder = None  # Track which folder is being previewed
-        self.folder_preview_tasks = {}  # Map folder path to worker
-        self.folder_preview_cache = {}  # Cache of folder path to thumbnail image path
-        self.waiting_folders = []  # Queue for waiting folders
+        self.last_previewed_folder = None
+        self.folder_preview_tasks = {}
+        self.folder_preview_cache = {}
+        self.waiting_folders = []
+        self._checked_folder_names_cache = set()
 
-        # --- Central Widget and Layout ---
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Top Panel: Folder Selection ---
         top_panel = QWidget()
         top_layout = QHBoxLayout(top_panel)
         self.select_folder_button = QPushButton(
@@ -404,15 +428,12 @@ class ImageFolderTool(QMainWindow):
         top_layout.addWidget(self.folder_label, 1)
         main_layout.addWidget(top_panel)
 
-        # --- Middle Panel Splitter ---
         splitter_main = QSplitter(Qt.Orientation.Horizontal)
 
-        # --- Left Panel: Subfolder List & Merge Button ---
         left_panel_widget = QWidget()
         left_layout = QVBoxLayout(left_panel_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Subfolder List Area
         subfolder_group = QWidget()
         subfolder_layout = QVBoxLayout(subfolder_group)
         subfolder_layout.setContentsMargins(5, 5, 5, 5)
@@ -430,34 +451,23 @@ class ImageFolderTool(QMainWindow):
         )
         self.subfolder_list_widget.itemChanged.connect(self.update_merge_button_state)
         self.subfolder_list_widget.setIconSize(QSize(64, 64))
-        subfolder_layout.addWidget(self.subfolder_list_widget, 1)  # Allow list to grow
+        subfolder_layout.addWidget(self.subfolder_list_widget, 1)
 
-        # Merge Button (Moved below the list)
         self.merge_button = QPushButton(
             QIcon.fromTheme("document-save-as"), "Merge Checked Folders into New Folder"
         )
         self.merge_button.clicked.connect(self.confirm_and_start_merge_to_new)
-        self.merge_button.setEnabled(False)  # Disabled initially
+        self.merge_button.setEnabled(False)
         subfolder_layout.addWidget(self.merge_button)
 
-        # Removed Target label and button
+        left_layout.addWidget(subfolder_group, 1)
 
-        left_layout.addWidget(subfolder_group, 1)  # Let subfolder section expand
+        splitter_main.addWidget(left_panel_widget)
 
-        # --- Separator --- (Optional visual separation)
-        line_sep = QFrame()
-        line_sep.setFrameShape(QFrame.Shape.VLine)
-        line_sep.setFrameShadow(QFrame.Shadow.Sunken)
-        # Might need to place this differently if used, perhaps in splitter context
-
-        splitter_main.addWidget(left_panel_widget)  # Add left panel to splitter
-
-        # --- Right Panel: Image Preview List & Large Preview ---
         right_panel_widget = QWidget()
         right_layout = QVBoxLayout(right_panel_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Image Preview List (Shows content of selected subfolder)
         image_list_title = QLabel("Image Preview (Content of selected folder)")
         image_list_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
         right_layout.addWidget(image_list_title)
@@ -467,25 +477,21 @@ class ImageFolderTool(QMainWindow):
         self.image_list_widget.setIconSize(THUMBNAIL_SIZE)
         self.image_list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.image_list_widget.setWordWrap(True)
-        # Connect selection here to the large preview display
         self.image_list_widget.itemSelectionChanged.connect(self.show_large_preview)
-        right_layout.addWidget(self.image_list_widget, 1)  # Allow list to stretch
+        right_layout.addWidget(self.image_list_widget, 1)
 
-        # Large Preview Area (Below image list)
         preview_area_title = QLabel("Selected Image Preview")
         preview_area_title.setFont(QFont("SansSerif", 11, QFont.Weight.Bold))
         right_layout.addWidget(preview_area_title)
 
-        self.image_path_label = QLabel(
-            "Select an image from the list above"
-        )  # Updated label
+        self.image_path_label = QLabel("Select an image from the list above")
         self.image_path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_path_label.setWordWrap(True)
         right_layout.addWidget(self.image_path_label)
 
-        self.preview_label = QLabel("Image Preview")  # The actual large image display
+        self.preview_label = QLabel("Image Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(PREVIEW_AREA_MIN_WIDTH, 200)  # Min size
+        self.preview_label.setMinimumSize(PREVIEW_AREA_MIN_WIDTH, 200)
         self.preview_label.setStyleSheet(
             "QLabel { background-color : lightgray; border: 1px solid gray; }"
         )
@@ -493,21 +499,18 @@ class ImageFolderTool(QMainWindow):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.preview_label)
-        right_layout.addWidget(scroll_area, 2)  # Give large preview more space
+        right_layout.addWidget(scroll_area, 2)
 
-        splitter_main.addWidget(right_panel_widget)  # Add right panel to splitter
-        splitter_main.setSizes([450, 850])  # Adjust initial sizes
+        splitter_main.addWidget(right_panel_widget)
+        splitter_main.setSizes([450, 850])
 
         main_layout.addWidget(splitter_main, 1)
 
-        # --- Bottom Panel: Log Area ---
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
         self.log_edit.setFont(QFont("Monospace", 9))
         self.log_edit.setFixedHeight(100)
         main_layout.addWidget(self.log_edit)
-
-    # --- Slot Methods ---
 
     @Slot(str)
     def log_message(self, message):
@@ -526,29 +529,27 @@ class ImageFolderTool(QMainWindow):
     def handle_error(self, error_message):
         self.log_message(f"ERROR: {error_message}")
         QMessageBox.critical(self, "Error", error_message)
-        # Don't necessarily re-enable UI here, wait for finished signal
+        if self.worker_thread:
+            self.enable_ui(True)
+            self.worker_thread = None
+            self.current_task_type = None
 
-    # Modify finished slot to preserve thumbnails during refresh
     @Slot(str, bool)
     def task_finished(self, task_type, success):
         self.log_message(
             f"Task '{task_type}' finished {'successfully' if success else 'with errors/cancellation'}."
         )
-        original_worker = self.sender()  # Get the worker that emitted the signal
-        # Only clear worker if it's the one that just finished
+        original_worker = self.sender()
         if self.worker_thread == original_worker:
             self.worker_thread = None
             self.current_task_type = None
-            self.enable_ui(True)  # Re-enable UI now that task is done
+            self.enable_ui(True)
 
-        # Refresh subfolder list after a merge operation completes
         if task_type == "merge_subs":
             self.log_message("Refreshing subfolder list...")
-            self.clear_preview_area()  # Clear previews after merge
-            # Don't clear the folder thumbnail cache here
-            self.populate_subfolder_list()  # Reload subfolders
+            self.clear_preview_area()
+            self.populate_subfolder_list()
 
-        # Update status after scan finishes
         elif task_type == "scan_subfolder_images":
             if success:
                 count = self.image_list_widget.count()
@@ -564,22 +565,23 @@ class ImageFolderTool(QMainWindow):
                 self.image_path_label.setText(
                     f"Error scanning '{self.last_previewed_folder.name if self.last_previewed_folder else 'folder'}'."
                 )
+        elif task_type == "populate_subfolders":
+            if not success:
+                self.log_message("Failed to populate subfolders.")
 
     @Slot(bool)
     def enable_ui(self, enabled):
-        """Enables or disables UI elements during background tasks."""
         self.select_folder_button.setEnabled(enabled)
         self.subfolder_list_widget.setEnabled(enabled)
-        # Merge button state depends on selection
         if enabled and self.current_root_folder:
             self.update_merge_button_state()
         else:
             self.merge_button.setEnabled(False)
         self.image_list_widget.setEnabled(enabled)
+        self.subfolder_list_widget.setDisabled(not enabled)
 
     @Slot()
     def select_root_folder(self):
-        """Opens a dialog to select the root folder."""
         self.stop_worker_thread()
 
         folder = QFileDialog.getExistingDirectory(
@@ -590,143 +592,137 @@ class ImageFolderTool(QMainWindow):
             self.folder_label.setText(f"Selected: {self.current_root_folder}")
             self.log_message(f"Root folder selected: {self.current_root_folder}")
 
-            # Reset state
             self.subfolder_list_widget.clear()
-            self.clear_preview_area()  # Clear image list and preview
+            self.clear_preview_area()
             self.merge_button.setEnabled(False)
             self.last_previewed_folder = None
+            self.folder_preview_cache.clear()
+            self.folder_preview_tasks.clear()
+            self.waiting_folders.clear()
+            self._checked_folder_names_cache.clear()
 
-            # Populate subfolders ONLY
             self.populate_subfolder_list()
-            # DO NOT automatically scan all images anymore
 
     @Slot()
     def populate_subfolder_list(self):
-        """Finds immediate subdirectories and adds them as checkable items to the list."""
+        if not self.current_root_folder or not self.current_root_folder.is_dir():
+            self.log_message("No valid root folder selected to populate.")
+            return
+
+        self.stop_worker_thread()
+
+        self._checked_folder_names_cache = set()
+        for index in range(self.subfolder_list_widget.count()):
+            item = self.subfolder_list_widget.item(index)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                self._checked_folder_names_cache.add(item.text())
+
+        self.subfolder_list_widget.clear()
+        self.log_message("Starting subfolder population task...")
+        self.enable_ui(False)
+
+        for worker in self.folder_preview_tasks.values():
+            if worker and worker.isRunning():
+                worker.stop()
+        self.folder_preview_tasks.clear()
+        self.waiting_folders.clear()
+
+        self.current_task_type = "populate_subfolders"
+        self.worker_thread = Worker(
+            task_type="populate_subfolders",
+            root_folder_to_scan=str(self.current_root_folder),
+        )
+        self.worker_thread.progress.connect(self.update_progress)
+        self.worker_thread.error.connect(self.handle_error)
+        self.worker_thread.subfolders_found.connect(self._handle_subfolders_found)
+        self.worker_thread.finished.connect(self.task_finished)
+        self.worker_thread.start()
+
+    @Slot(list)
+    def _handle_subfolders_found(self, subdirs):
+        self.log_message(f"Received {len(subdirs)} subfolders from worker.")
+
+        cached_thumbnails_by_name = {}
+        for folder_path_str, image_path in self.folder_preview_cache.items():
+            folder_name = Path(folder_path_str).name
+            cached_thumbnails_by_name[folder_name] = image_path
+
+        if not subdirs:
+            self.log_message("No subfolders found by worker.")
+            return
+
+        count = 0
+        folders_needing_thumbnails = []
         try:
-            # Save current checked folders before clearing
-            checked_folder_names = set()
-            for index in range(self.subfolder_list_widget.count()):
-                item = self.subfolder_list_widget.item(index)
-                if item and item.checkState() == Qt.CheckState.Checked:
-                    checked_folder_names.add(item.text())
+            for subdir in sorted(subdirs, key=lambda p: p.name):
+                item = QListWidgetItem(subdir.name)
+                item.setData(Qt.ItemDataRole.UserRole, subdir)
+                item.setIcon(QIcon.fromTheme("folder"))
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                if subdir.name in self._checked_folder_names_cache:
+                    item.setCheckState(Qt.CheckState.Checked)
+                else:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                self.subfolder_list_widget.addItem(item)
+                count += 1
 
-            # Save current thumbnails (map folder name to thumbnail path for more resilience)
-            cached_thumbnails_by_name = {}
-            for folder_path_str, image_path in self.folder_preview_cache.items():
-                folder_name = Path(folder_path_str).name
-                cached_thumbnails_by_name[folder_name] = image_path
+                folder_path_str = str(subdir)
+                if subdir.name in cached_thumbnails_by_name:
+                    cached_image_path = cached_thumbnails_by_name[subdir.name]
+                    if os.path.isfile(cached_image_path) and os.access(
+                        cached_image_path, os.R_OK
+                    ):
+                        self.folder_preview_cache[folder_path_str] = cached_image_path
+                        self.set_folder_thumbnail(folder_path_str, cached_image_path)
+                    else:
+                        folders_needing_thumbnails.append((subdir, item))
+                        if folder_path_str in self.folder_preview_cache:
+                            del self.folder_preview_cache[folder_path_str]
+                else:
+                    folders_needing_thumbnails.append((subdir, item))
 
-            self.subfolder_list_widget.clear()
-
-            # Clean up any existing preview tasks
-            for worker in self.folder_preview_tasks.values():
-                if worker and worker.isRunning():
-                    worker.stop()
-
-            self.folder_preview_tasks.clear()  # Reset preview tasks
-            self.waiting_folders.clear()  # Clear waiting folders
-
-            # Initialize thumbnail loading with caution
-            max_initial_workers = 2  # Only start 2 workers initially
+            max_initial_workers = 2
             active_workers = 0
 
-            if not self.current_root_folder or not self.current_root_folder.is_dir():
-                return
+            for i in range(min(max_initial_workers, len(folders_needing_thumbnails))):
+                folder_path, item = folders_needing_thumbnails[i]
+                self.request_folder_preview(folder_path, item)
+                active_workers += 1
 
-            count = 0
-            try:
-                subdirs = [d for d in self.current_root_folder.iterdir() if d.is_dir()]
-                if not subdirs:
-                    self.log_message("No subfolders found in the selected root folder.")
-                    return
+            for i in range(max_initial_workers, len(folders_needing_thumbnails)):
+                folder_path, item = folders_needing_thumbnails[i]
+                self.waiting_folders.append((folder_path, item))
 
-                # First, add all items to the list
-                for subdir in sorted(subdirs, key=lambda p: p.name):
-                    item = QListWidgetItem(subdir.name)
-                    item.setData(Qt.ItemDataRole.UserRole, subdir)  # Store Path object
-                    item.setIcon(QIcon.fromTheme("folder"))  # Default folder icon
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    if subdir.name in checked_folder_names:
-                        item.setCheckState(Qt.CheckState.Checked)
-                    else:
-                        item.setCheckState(Qt.CheckState.Unchecked)
-                    self.subfolder_list_widget.addItem(item)
-                    count += 1
+            self.log_message(
+                f"Populated list with {count} subfolders. Requesting thumbnails..."
+            )
 
-                    # Update folder cache with new path structure
-                    folder_path_str = str(subdir)
-                    if subdir.name in cached_thumbnails_by_name:
-                        cached_image_path = cached_thumbnails_by_name[subdir.name]
-                        if os.path.isfile(cached_image_path) and os.access(
-                            cached_image_path, os.R_OK
-                        ):
-                            # Update cache with the new path structure
-                            self.folder_preview_cache[folder_path_str] = (
-                                cached_image_path
-                            )
-                            # Apply the thumbnail immediately
-                            self.set_folder_thumbnail(
-                                folder_path_str, cached_image_path
-                            )
-
-                # Process thumbnails for folders that don't have cached thumbnails
-                folders_needing_thumbnails = []
-                for i in range(self.subfolder_list_widget.count()):
-                    item = self.subfolder_list_widget.item(i)
-                    folder_path = item.data(Qt.ItemDataRole.UserRole)
-                    if str(folder_path) not in self.folder_preview_cache:
-                        folders_needing_thumbnails.append((folder_path, item))
-
-                # Start a limited number immediately
-                for i in range(
-                    min(max_initial_workers, len(folders_needing_thumbnails))
-                ):
-                    folder_path, item = folders_needing_thumbnails[i]
-                    self.request_folder_preview(folder_path, item)
-                    active_workers += 1
-
-                # Queue the rest for later
-                for i in range(max_initial_workers, len(folders_needing_thumbnails)):
-                    folder_path, item = folders_needing_thumbnails[i]
-                    self.waiting_folders.append((folder_path, item))
-
-                self.log_message(f"Found {count} subfolders.")
-
-            except Exception as e:
-                self.handle_error(f"Error listing subfolders: {e}")
-            self.update_merge_button_state()
         except Exception as e:
-            self.handle_error(f"Critical error in populate_subfolder_list: {e}")
+            self.handle_error(f"Error populating subfolder list widget: {e}")
+        finally:
+            self.update_merge_button_state()
 
     @Slot(str, bool)
     def folder_preview_task_finished(self, task_type, success):
-        """Handle completion of a folder preview task."""
         if task_type != "get_folder_preview":
             return
 
-        # Get the worker that finished
         worker = self.sender()
 
-        # Remove from active tasks
         for folder_path, w in list(self.folder_preview_tasks.items()):
             if w == worker:
                 del self.folder_preview_tasks[folder_path]
                 break
 
-        # Start a waiting folder if available
         if self.waiting_folders:
             next_folder, next_item = self.waiting_folders.pop(0)
             self.request_folder_preview(next_folder, next_item)
 
     def request_folder_preview(self, folder_path, list_item):
-        """Starts a background task to find a preview image for a folder."""
         try:
-            # Skip invalid folders
             if not folder_path or not folder_path.is_dir():
                 return
 
-            # Check if we already have a cached preview for this folder
             folder_path_str = str(folder_path)
             if folder_path_str in self.folder_preview_cache:
                 cached_path = self.folder_preview_cache[folder_path_str]
@@ -734,14 +730,11 @@ class ImageFolderTool(QMainWindow):
                     self.set_folder_thumbnail(folder_path_str, cached_path)
                     return
 
-            # Limit active workers to prevent resource exhaustion
-            max_workers = 2  # Reduce from 3 to 2
+            max_workers = 2
             if len(self.folder_preview_tasks) >= max_workers:
-                # Queue this folder for later
                 self.waiting_folders.append((folder_path, list_item))
                 return
 
-            # Start a new worker to find a preview image
             worker = Worker(
                 task_type="get_folder_preview", folder_to_scan=folder_path_str
             )
@@ -750,7 +743,6 @@ class ImageFolderTool(QMainWindow):
             worker.folder_preview_image.connect(self.set_folder_thumbnail)
             worker.finished.connect(self.folder_preview_task_finished)
 
-            # Store reference to worker with folder path
             self.folder_preview_tasks[folder_path_str] = worker
             worker.start()
         except Exception as e:
@@ -758,36 +750,29 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str, str)
     def set_folder_thumbnail(self, folder_path_str, image_path_str):
-        """Sets the thumbnail for a folder in the subfolder list."""
-        # Cache this preview for future use
         try:
             self.folder_preview_cache[folder_path_str] = image_path_str
 
-            # Ensure the image file exists and is readable
             if not os.path.isfile(image_path_str) or not os.access(
                 image_path_str, os.R_OK
             ):
                 self.log_message(f"Thumbnail image not accessible: {image_path_str}")
                 return
 
-            # Find the corresponding item in the list
             found_item = False
-            for i in range(
-                self.subfolder_list_widget.count()
-            ):  # Fixed: Added missing closing parenthesis
+            for i in range(self.subfolder_list_widget.count()):
                 try:
                     item = self.subfolder_list_widget.item(i)
-                    if not item:  # Skip if item is None
+                    if not item:
                         continue
 
                     item_folder = item.data(Qt.ItemDataRole.UserRole)
-                    if not item_folder:  # Skip if no folder data
+                    if not item_folder:
                         continue
 
                     if str(item_folder) == folder_path_str:
                         found_item = True
                         try:
-                            # Safely create and set thumbnail
                             reader = QImageReader(image_path_str)
                             reader.setScaledSize(QSize(64, 64))
 
@@ -825,13 +810,11 @@ class ImageFolderTool(QMainWindow):
         except Exception as e:
             self.log_message(f"Error in set_folder_thumbnail: {e}")
 
-    @Slot(QListWidgetItem, QListWidgetItem)  # previous, current
+    @Slot(QListWidgetItem, QListWidgetItem)
     def trigger_subfolder_preview(self, current, previous):
-        """Starts scanning the currently focused subfolder for images."""
-        if current:  # Check if current item is valid
+        if current:
             subfolder_path = current.data(Qt.ItemDataRole.UserRole)
             if subfolder_path and subfolder_path.is_dir():
-                # Check if already previewing this folder or task running
                 if (
                     subfolder_path == self.last_previewed_folder
                     and self.worker_thread
@@ -840,16 +823,15 @@ class ImageFolderTool(QMainWindow):
                     self.log_message(f"Already scanning '{subfolder_path.name}'.")
                     return
 
-                self.stop_worker_thread()  # Stop any previous task (scan or merge)
-                self.clear_preview_area()  # Clear previous preview
+                self.stop_worker_thread()
+                self.clear_preview_area()
                 self.last_previewed_folder = subfolder_path
                 self.log_message(f"Previewing folder: {subfolder_path.name}")
                 self.image_path_label.setText(f"Scanning '{subfolder_path.name}'...")
                 self.start_subfolder_scan(subfolder_path)
 
     def start_subfolder_scan(self, folder_path):
-        """Initiates the background worker to scan a specific folder."""
-        self.enable_ui(False)  # Disable UI during scan
+        self.enable_ui(False)
         self.current_task_type = "scan_subfolder_images"
         self.worker_thread = Worker(
             task_type="scan_subfolder_images", folder_to_scan=str(folder_path)
@@ -862,7 +844,6 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def clear_preview_area(self):
-        """Clears the image list and large preview display."""
         self.image_list_widget.clear()
         self.preview_label.clear()
         self.preview_label.setText("Image Preview")
@@ -871,28 +852,21 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(list)
     def add_image_paths_to_list(self, paths):
-        """Adds image paths from the worker to the image list with optimized thumbnail loading."""
         worker = self.sender()
-        # Ensure signal is from the correct worker and task type
         if (
             worker != self.worker_thread
             or self.current_task_type != "scan_subfolder_images"
         ):
-            return  # Ignore signals from old/wrong workers
+            return
 
         for image_path_str in paths:
             image_path = Path(image_path_str)
             item = QListWidgetItem(image_path.name)
-            item.setData(
-                Qt.ItemDataRole.UserRole, image_path_str
-            )  # Store full path string
+            item.setData(Qt.ItemDataRole.UserRole, image_path_str)
 
-            # Use QImageReader for efficient thumbnail loading
             try:
                 reader = QImageReader(image_path_str)
-                # Set the scaled size before reading the image
                 reader.setScaledSize(THUMBNAIL_SIZE)
-                # Only load what's needed for the thumbnail
                 thumbnail = reader.read()
 
                 if not thumbnail.isNull():
@@ -907,14 +881,12 @@ class ImageFolderTool(QMainWindow):
                 item.setIcon(QIcon.fromTheme("image-missing"))
 
             self.image_list_widget.addItem(item)
-            self.image_files_in_preview.append(image_path_str)  # Keep track
+            self.image_files_in_preview.append(image_path_str)
 
     @Slot()
     def show_large_preview(self):
-        """Displays the selected image from the image_list_widget."""
         selected_items = self.image_list_widget.selectedItems()
         if not selected_items:
-            # Clear preview if selection is cleared
             self.preview_label.clear()
             self.preview_label.setText("Image Preview")
             self.image_path_label.setText("Select an image from the list above")
@@ -932,7 +904,6 @@ class ImageFolderTool(QMainWindow):
             self.image_path_label.setText("Error: File not found")
             return
 
-        # Display filename or partial path in label
         self.image_path_label.setText(
             f"...{os.path.sep}{image_path.parent.name}{os.path.sep}{image_path.name}"
         )
@@ -944,7 +915,6 @@ class ImageFolderTool(QMainWindow):
             return
 
         try:
-            # Find the scroll area by looking upward through the parent hierarchy
             scroll_area = None
             parent = self.preview_label.parent()
             while parent:
@@ -953,18 +923,15 @@ class ImageFolderTool(QMainWindow):
                     break
                 parent = parent.parent()
 
-            # Get available width - first try from scroll area if found
-            available_width = PREVIEW_AREA_MIN_WIDTH  # Default fallback
+            available_width = PREVIEW_AREA_MIN_WIDTH
 
             if scroll_area and scroll_area.viewport():
                 available_width = scroll_area.viewport().width() - 20
             elif self.preview_label.width() > 50:
                 available_width = self.preview_label.width() - 20
 
-            # Ensure we have a reasonable width
             available_width = max(available_width, 300)
 
-            # Scale the pixmap if needed
             if pixmap.width() > available_width:
                 scaled_pixmap = pixmap.scaledToWidth(
                     available_width, Qt.TransformationMode.SmoothTransformation
@@ -979,14 +946,12 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def update_merge_button_state(self):
-        """Enable merge button only if >= 1 subfolder is checked."""
         checked_items = self.get_checked_subfolder_items()
         self.merge_button.setEnabled(
             len(checked_items) > 0 and self.current_root_folder is not None
         )
 
     def get_checked_subfolder_items(self):
-        """Returns all checked subfolder items."""
         checked_items = []
         for index in range(self.subfolder_list_widget.count()):
             item = self.subfolder_list_widget.item(index)
@@ -996,12 +961,10 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def confirm_and_start_merge_to_new(self):
-        """Confirms merge, determines target, creates it, and starts worker."""
         if not self.current_root_folder:
             return
-        self.stop_worker_thread()  # Stop any running task
+        self.stop_worker_thread()
 
-        # --- Get checked sources ---
         checked_items = self.get_checked_subfolder_items()
         source_folders = []
         source_names = []
@@ -1016,7 +979,7 @@ class ImageFolderTool(QMainWindow):
                     "Merge Error",
                     f"Invalid source folder in selection: {item.text()}",
                 )
-                return  # Should not happen if list is populated correctly
+                return
 
         if not source_folders:
             QMessageBox.warning(
@@ -1024,11 +987,9 @@ class ImageFolderTool(QMainWindow):
             )
             return
 
-        # --- Determine Target Name ---
-        source_names.sort()  # Sort alphabetically
+        source_names.sort()
         first_source_name = source_names[0]
 
-        # Check if the name already contains a merged suffix
         if "_merged" in first_source_name.lower():
             target_folder_name = f"{first_source_name}1"
         else:
@@ -1036,7 +997,6 @@ class ImageFolderTool(QMainWindow):
 
         target_folder_path = self.current_root_folder / target_folder_name
 
-        # --- Check if Target Conflicts with Sources ---
         if target_folder_path in source_folders:
             QMessageBox.critical(
                 self,
@@ -1047,10 +1007,7 @@ class ImageFolderTool(QMainWindow):
             )
             return
 
-        # --- Confirmation Dialog ---
-        source_list_str = "\n - ".join(
-            sorted([p.name for p in source_folders])
-        )  # Show sorted names
+        source_list_str = "\n - ".join(sorted([p.name for p in source_folders]))
         confirmation_message = (
             f"This will merge ALL content recursively from the following SOURCE subfolders:\n"
             f" - {source_list_str}\n\n"
@@ -1062,7 +1019,6 @@ class ImageFolderTool(QMainWindow):
             f"Proceed with merge?"
         )
 
-        # Handle case where target folder *already* exists
         if target_folder_path.exists():
             confirmation_message = (
                 f"The target folder '{target_folder_name}' already exists.\n\n"
@@ -1079,11 +1035,8 @@ class ImageFolderTool(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # --- Create Target Directory ---
             try:
-                target_folder_path.mkdir(
-                    parents=True, exist_ok=True
-                )  # Create target dir
+                target_folder_path.mkdir(parents=True, exist_ok=True)
                 self.log_message(f"Ensured target folder exists: {target_folder_path}")
             except OSError as e:
                 self.handle_error(
@@ -1091,13 +1044,11 @@ class ImageFolderTool(QMainWindow):
                 )
                 return
 
-            # --- Start Worker ---
             source_paths_str = [str(p) for p in source_folders]
             target_path_str = str(target_folder_path)
             self.start_merge_task(source_paths_str, target_path_str)
 
     def start_merge_task(self, source_paths_str, target_path_str):
-        """Starts the background thread to merge folders."""
         self.log_message(f"Starting merge into '{Path(target_path_str).name}'...")
         self.enable_ui(False)
 
@@ -1113,42 +1064,38 @@ class ImageFolderTool(QMainWindow):
         self.worker_thread.start()
 
     def stop_worker_thread(self):
-        """Stops the current worker thread if it's running."""
-        if self.worker_thread and self.worker_thread.isRunning():
+        worker_to_stop = self.worker_thread
+        if worker_to_stop and worker_to_stop.isRunning():
             task = self.current_task_type or "unknown task"
             self.log_message(f"Attempting to cancel {task}...")
-            self.worker_thread.stop()
-            if not self.worker_thread.wait(1500):  # Shorter wait
+            worker_to_stop.stop()
+            if not worker_to_stop.wait(1500):
                 self.log_message(
                     f"Warning: Worker thread ({task}) did not stop gracefully. Terminating."
                 )
-                self.worker_thread.terminate()
-                self.worker_thread.wait()
-            # Check if it was the expected worker before clearing
-            if (
-                self.worker_thread == self.sender() or not self.sender()
-            ):  # Handle direct calls too
+                worker_to_stop.terminate()
+                worker_to_stop.wait()
+
+            if self.worker_thread == worker_to_stop:
                 self.worker_thread = None
                 self.current_task_type = None
-                # Avoid enabling UI if another task might be queued immediately
-                # self.enable_ui(True)
+                self.enable_ui(True)
                 self.log_message(f"{task.capitalize()} stopped.")
+            else:
+                self.log_message(f"Stopped an older worker for task {task}.")
 
     def closeEvent(self, event):
-        """Ensure the worker thread is stopped when closing the window."""
         self.stop_worker_thread()
 
-        # Also stop all folder preview tasks
         for worker in self.folder_preview_tasks.values():
             if worker and worker.isRunning():
                 worker.stop()
-                worker.wait(100)  # Brief wait
+                worker.wait(100)
 
         self.folder_preview_tasks.clear()
         event.accept()
 
 
-# --- Main Execution ---
 if __name__ == "__main__":
     try:
         app = QApplication(sys.argv)
