@@ -410,6 +410,8 @@ class ImageFolderTool(QMainWindow):
         self.folder_preview_cache = {}
         self.waiting_folders = []
         self._checked_folder_names_cache = set()
+        self.last_merged_sources = []
+        self.last_merged_target = None
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
