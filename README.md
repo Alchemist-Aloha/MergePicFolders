@@ -1,6 +1,6 @@
 # Merge Picture folders
 
-A modern GUI tool to manage and merge image subfolders, built with PySide6.
+A modern GUI tool to manage and merge image folders, built with PySide6.
 
 ![Program Screenshot](doc/screen.png)
 
