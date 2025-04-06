@@ -395,6 +395,14 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str)
     def log_message(self, message):
+        '''
+        Log a message to the activity log area.
+        
+        Args:
+            message (str): The message to log. 
+            
+        This method appends the message to the log area with a timestamp.
+        It also ensures that the log area scrolls to the bottom to show the latest message.'''
         timestamp = time.strftime("%H:%M:%S")
         self.log_edit.append(f"[{timestamp}] {message}")
         self.log_edit.verticalScrollBar().setValue(
@@ -404,10 +412,26 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str)
     def update_progress(self, message):
+        '''
+        Update the progress message in the log area.
+        
+        Args:
+            message (str): The progress message to log.
+
+        '''
         self.log_message(f"PROGRESS: {message}")
 
     @Slot(str)
     def handle_error(self, error_message):
+        '''
+        Handle errors during worker tasks.
+        
+        Args:
+            error_message (str): The error message to log.
+            
+        This method logs the error message and shows a critical error dialog to the user.
+        It also stops the current worker thread if it exists.
+        '''
         self.log_message(f"ERROR: {error_message}")
         QMessageBox.critical(self, "Error", error_message)
         if self.worker_thread:
@@ -417,6 +441,14 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str, bool)
     def task_finished(self, task_type, success):
+        '''
+        Handle the completion of a worker task.
+        Args:
+            task_type (str): The type of task that finished.
+            success (bool): Whether the task completed successfully or not.
+        This method logs the task completion message and updates the UI accordingly.
+        It also handles specific tasks like merging subfolders and scanning images.
+        '''
         self.log_message(
             f"Task '{task_type}' finished {'successfully' if success else 'with errors/cancellation'}."
         )
@@ -532,6 +564,13 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(bool)
     def enable_ui(self, enabled):
+        '''
+        Enable or disable the UI elements based on the provided flag.
+        Args:
+            enabled (bool): True to enable the UI, False to disable it.
+        This method enables or disables the select folder button, subfolder list,   
+        image list, and merge button based on the provided flag.
+        '''
         self.select_folder_button.setEnabled(enabled)
         self.subfolder_list_widget.setEnabled(enabled)
         if enabled and self.current_root_folder:
@@ -543,6 +582,12 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def select_root_folder(self):
+        '''
+        Open a file dialog to select the root folder containing subfolders.
+        This method stops any running worker thread, clears the preview area,
+        and resets the state variables before allowing the user to select a new folder.
+        '''
+        
         self.stop_worker_thread()
 
         folder = QFileDialog.getExistingDirectory(
@@ -566,6 +611,12 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def populate_subfolder_list(self):
+        '''
+        Populate the subfolder list widget with subfolders from the selected root folder.
+        This method stops any running worker thread, clears the preview area,
+        and starts a new worker thread to scan for subfolders.
+        It also handles the caching of folder thumbnails and manages the UI state.
+        '''
         if not self.current_root_folder or not self.current_root_folder.is_dir():
             self.log_message("No valid root folder selected to populate.")
             return
@@ -601,6 +652,14 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(list)
     def _handle_subfolders_found(self, subdirs):
+        '''
+        Handle the subfolders found by the worker thread.
+        Args:
+            subdirs (list): List of subdirectories found by the worker.
+        This method populates the subfolder list widget with the found subdirectories,
+        sets their icons, and manages the thumbnail caching.
+        It also handles the sorting of the subfolders based on the current sort mode.
+        '''
         self.log_message(f"Received {len(subdirs)} subfolders from worker.")
 
         cached_thumbnails_by_name = {}
@@ -671,6 +730,26 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str, bool)
     def folder_preview_task_finished(self, task_type, success):
+        """
+        Handle the completion of a folder preview generation task.
+        
+        This slot is connected to the 'finished' signal of Worker objects created for folder preview
+        tasks. When a folder preview task completes, this method removes it from the tracking
+        dictionary and starts the next waiting task from the queue if available.
+        
+        Args:
+            task_type (str): The type of task that finished, should be "get_folder_preview".
+            success (bool): Whether the task completed successfully or not.
+            
+        Note:
+            This method is automatically called by the Qt signal-slot system when a Worker
+            object emits its 'finished' signal. It identifies which worker emitted the signal
+            using self.sender() and manages the task queue accordingly.
+            
+        Side effects:
+            - Removes the completed task from self.folder_preview_tasks
+            - May start a new folder preview task from self.waiting_folders queue
+        """
         if task_type != "get_folder_preview":
             return
 
@@ -686,6 +765,32 @@ class ImageFolderTool(QMainWindow):
             self.request_folder_preview(next_folder, next_item)
 
     def request_folder_preview(self, folder_path, list_item):
+        """
+        Request a thumbnail preview generation for a specific folder.
+        
+        This method manages the creation and execution of worker threads that generate
+        thumbnail previews for folders. It implements a throttling mechanism to limit
+        the number of concurrent preview tasks and maintains a queue of waiting folders.
+        
+        If a preview for the folder already exists in the cache, it uses the cached preview
+        instead of starting a new task. Otherwise, it either starts a new worker thread or
+        adds the folder to the waiting queue if the maximum number of concurrent workers
+        has been reached.
+        
+        Args:
+            folder_path (Path): Path object representing the folder to generate a preview for
+            list_item (QListWidgetItem): The list widget item associated with this folder,
+                                         which will display the thumbnail when ready
+                                         
+        Side effects:
+            - May add entries to self.folder_preview_tasks dictionary
+            - May add entries to self.waiting_folders list
+            - May start a Worker thread to generate the preview
+            - May update the icon of the provided list_item if a cached preview exists
+            
+        Raises:
+            Various exceptions may be caught and logged, but not propagated
+        """
         try:
             if not folder_path or not list_item or not folder_path.is_dir():
                 return
@@ -720,6 +825,22 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(str, str)
     def set_folder_thumbnail(self, folder_path_str, image_path_str):
+        """
+        Set the thumbnail for a folder in the subfolder list widget.
+        
+        This method updates the icon of a list widget item to display a thumbnail
+        image representing the folder's contents. It handles various edge cases and
+        error conditions when loading or displaying thumbnails.
+        
+        Args:
+            folder_path_str (str): The path of the folder for which to set the thumbnail
+            image_path_str (str): The path of the thumbnail image to set
+            
+        Side effects:
+            - Updates the folder_preview_cache dictionary
+            - Sets the icon of the corresponding list widget item
+            - Logs any errors encountered during thumbnail loading or setting
+        """
         try:
             self.folder_preview_cache[folder_path_str] = image_path_str
 
@@ -782,6 +903,17 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(QListWidgetItem, QListWidgetItem)
     def trigger_subfolder_preview(self, current, previous):
+        '''
+        Triggered when the user selects a subfolder from the list.
+        This method checks if the selected item is a valid subfolder and starts
+        a scan for images in that subfolder. It also handles the case where
+        the user selects a different subfolder while a scan is already in progress.
+        Args:
+            current (QListWidgetItem): The currently selected item in the subfolder list.
+            previous (QListWidgetItem): The previously selected item in the subfolder list.
+        This method stops any running worker thread, clears the preview area,
+        and starts a new worker thread to scan for images in the selected subfolder.
+        '''
         if current:
             subfolder_path = current.data(Qt.ItemDataRole.UserRole)
             if subfolder_path and subfolder_path.is_dir():
@@ -801,6 +933,14 @@ class ImageFolderTool(QMainWindow):
                 self.start_subfolder_scan(subfolder_path)
 
     def start_subfolder_scan(self, folder_path):
+        '''
+        Start a scan for images in the selected subfolder.
+        Args:
+            folder_path (Path): The path of the subfolder to scan for images.
+        This method stops any running worker thread, clears the preview area,
+        and starts a new worker thread to scan for images in the selected subfolder.
+        It also updates the UI state to indicate that a scan is in progress.
+        '''
         self.enable_ui(False)
         self.current_task_type = "scan_subfolder_images"
         self.worker_thread = Worker(
@@ -814,6 +954,12 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def clear_preview_area(self):
+        '''
+        Clear the image preview area and reset the state variables.
+        This method clears the image list widget, resets the preview label,
+        and updates the image path label to indicate that no image is selected.
+        It also clears the list of image files in the preview area.
+        '''
         self.image_list_widget.clear()
         self.preview_label.clear()
         self.preview_label.setText("Image Preview")
@@ -822,6 +968,14 @@ class ImageFolderTool(QMainWindow):
 
     @Slot(list)
     def add_image_paths_to_list(self, paths):
+        '''
+        Add image paths to the image list widget and set their thumbnails.
+        Args:
+            paths (list): List of image paths to add to the image list widget.
+        This method iterates over the provided image paths, creates a QListWidgetItem
+        for each image, and sets its icon to the corresponding thumbnail. It also
+        handles errors while loading thumbnails and logs any issues encountered.
+        '''
         worker = self.sender()
         if (
             worker != self.worker_thread
@@ -855,6 +1009,13 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def show_large_preview(self):
+        '''
+        Show a large preview of the selected image in the image list widget.
+        This method retrieves the currently selected image from the list widget,
+        loads its thumbnail, and displays it in the preview area. It also updates
+        the image path label to show the selected image's path.
+        If no image is selected, it clears the preview area and resets the labels.
+        '''
         selected_items = self.image_list_widget.selectedItems()
         if not selected_items:
             self.preview_label.clear()
@@ -916,12 +1077,31 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def update_merge_button_state(self):
+        """
+        Update the enabled state of the merge button based on folder selection.
+        
+        This method checks if there are any checked subfolder items and 
+        if a root folder is selected. The merge button is enabled only when
+        at least one subfolder is checked and a valid root folder exists.
+        
+        Side effects:
+            - Changes the enabled state of self.merge_button
+        """
         checked_items = self.get_checked_subfolder_items()
         self.merge_button.setEnabled(
             len(checked_items) > 0 and self.current_root_folder is not None
         )
 
     def get_checked_subfolder_items(self):
+        """
+        Get all checked items from the subfolder list widget.
+        
+        This method iterates through all items in the subfolder list widget
+        and collects those that are checked by the user.
+        
+        Returns:
+            list: A list of QListWidgetItems that are checked in the subfolder list
+        """
         checked_items = []
         for index in range(self.subfolder_list_widget.count()):
             item = self.subfolder_list_widget.item(index)
@@ -931,6 +1111,28 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def confirm_and_start_merge_to_new(self):
+        """
+        Confirm and initiate the folder merge operation.
+        
+        This method:
+        1. Validates the checked folder selection
+        2. Generates a target folder name based on the first source folder
+        3. Shows a confirmation dialog with details about the merge operation
+        4. Creates the target folder if it doesn't exist
+        5. Starts the actual merge worker task
+        
+        The method handles various edge cases:
+        - No root folder selected
+        - No valid source folders checked
+        - Target folder name conflicts with source folders
+        - Target folder already exists
+        
+        Side effects:
+            - Creates a new folder on the filesystem
+            - Stores merge source and target information
+            - Starts a worker thread for the merge operation
+            - Disables the UI during the merge operation
+        """
         if not self.current_root_folder:
             return
         self.stop_worker_thread()
@@ -1023,6 +1225,21 @@ class ImageFolderTool(QMainWindow):
             self.start_merge_task(source_paths_str, target_path_str)
 
     def start_merge_task(self, source_paths_str, target_path_str):
+        """
+        Start the worker thread to merge folders.
+        
+        This method initializes and runs the merge operation in a background thread.
+        It updates the UI to show progress and disables user interaction during the merge.
+        
+        Args:
+            source_paths_str (list): List of source folder paths as strings
+            target_path_str (str): Target folder path as string
+            
+        Side effects:
+            - Creates a worker thread
+            - Disables the UI
+            - Sets the current task type to "merge_subs"
+        """
         self.log_message(f"Starting merge into '{Path(target_path_str).name}'...")
         self.enable_ui(False)
 
@@ -1038,6 +1255,19 @@ class ImageFolderTool(QMainWindow):
         self.worker_thread.start()
 
     def stop_worker_thread(self):
+        """
+        Safely stop any running worker thread.
+        
+        This method attempts to gracefully stop the currently running worker thread.
+        If the thread doesn't stop within the timeout period, it is forcefully terminated.
+        The UI is re-enabled after the thread is stopped.
+        
+        Side effects:
+            - May stop a running worker thread
+            - Resets worker thread related state variables
+            - Re-enables the UI
+            - Logs the thread stopping status
+        """
         worker_to_stop = self.worker_thread
         if worker_to_stop and worker_to_stop.isRunning():
             task = self.current_task_type or "unknown task"
@@ -1061,7 +1291,19 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def uncheck_all_subfolders(self):
-        """Uncheck all items in the subfolder list."""
+        """
+        Uncheck all items in the subfolder list.
+        
+        This method iterates through all items in the subfolder list widget,
+        unchecking any that are currently checked. It also clears the checked
+        folder names cache and updates the merge button state.
+        
+        Side effects:
+            - Unchecks all items in the subfolder list widget
+            - Clears the checked folder names cache
+            - Updates the merge button state
+            - Logs the action
+        """
         for index in range(self.subfolder_list_widget.count()):
             item = self.subfolder_list_widget.item(index)
             if item and item.checkState() == Qt.CheckState.Checked:
@@ -1074,14 +1316,42 @@ class ImageFolderTool(QMainWindow):
 
     @Slot()
     def toggle_folder_sort(self):
-        """Toggle between natural and alphabetical sorting."""
+        """
+        Toggle between natural and alphabetical sorting for the subfolder list.
+        
+        Natural sorting treats numbers in folder names as actual numbers,
+        causing "folder2" to appear before "folder10", while alphabetical
+        sorting would place "folder10" before "folder2".
+        
+        Side effects:
+            - Updates the sort toggle button text
+            - Changes the sort mode flag
+            - Resorts the subfolder list
+            - Logs the sort mode change
+        """
         self.use_natural_sort = self.sort_toggle_button.isChecked()
         self.sort_toggle_button.setText(f"Natural Sort: {'On' if self.use_natural_sort else 'Off'}")
         self.log_message(f"Sorting mode: {'Natural' if self.use_natural_sort else 'Alphabetical'}")
         self.sort_subfolder_list()
     
     def sort_subfolder_list(self):
-        """Sort the subfolder list based on the current sort mode."""
+        """
+        Sort the subfolder list based on the current sort mode.
+        
+        This method preserves the selection and checked state of items while 
+        reordering them according to the current sort mode (natural or alphabetical).
+        
+        The process involves:
+        1. Storing the current selection and checked states
+        2. Removing all items from the list
+        3. Sorting the items using the appropriate sort key
+        4. Reinserting the sorted items into the list
+        5. Restoring the previous checked states and selection
+        
+        Side effects:
+            - Reorders the items in the subfolder list widget
+            - Preserves item checked states and selection
+        """
         # Store the current selection and checked state
         current_item = self.subfolder_list_widget.currentItem()
         current_path = current_item.data(Qt.ItemDataRole.UserRole) if current_item else None
@@ -1128,12 +1398,43 @@ class ImageFolderTool(QMainWindow):
     
     def _natural_sort_key(self, text):
         """
-        Natural sort key function that handles numbers within text.
-        For example: "folder10" will come after "folder2" in a natural sort.
+        Generate a natural sort key for a string containing numbers.
+        
+        This function splits text at number boundaries and converts numeric
+        segments to integers, allowing for "natural" sorting where "2" comes
+        before "10" when sorting filenames or folder names with numbers.
+        
+        Args:
+            text (str): The text to convert to a natural sort key
+            
+        Returns:
+            list: A list where numeric segments are converted to integers,
+                  suitable for use as a sort key
+                  
+        Example:
+            "folder10" will be sorted after "folder2" when using this key
         """
         return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
 
     def closeEvent(self, event):
+        """
+        Handle the window close event.
+        
+        This method is called automatically when the application window is closing.
+        It performs clean shutdown operations:
+        1. Stops the main worker thread
+        2. Stops all folder preview worker threads
+        3. Clears task queues and caches
+        4. Logs the application shutdown
+        
+        Args:
+            event (QCloseEvent): The close event object
+            
+        Side effects:
+            - Stops all running worker threads
+            - Clears task queues and caches
+            - Logs application shutdown
+        """
         # First stop the main worker
         self.stop_worker_thread()
 
