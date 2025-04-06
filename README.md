@@ -13,15 +13,14 @@ A modern GUI tool to manage and merge image subfolders, built with PySide6.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3
 - PySide6 (Qt for Python)
-- See `requirements.txt` for all dependencies
 
 ## Installation
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/merge_picfolders.git
+   git clone https://github.com/Alchemist-Aloha/merge_picfolders.git
    cd merge_picfolders
    ```
 
@@ -46,4 +45,4 @@ python src/main.py
 
 ## License
 
-[Add your license information here]
+MIT
