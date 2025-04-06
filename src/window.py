@@ -324,12 +324,12 @@ class ImageFolderTool(QMainWindow):
                 background-color: #ecf0f1;
             }}
             
-            /* Checkbox style in list */
+            /* Checkbox style in list - INCREASED SIZE */
             QListWidget::indicator {{
-                width: 20px;
-                height: 20px;
-                border-radius: 4px;
-                border: 2px solid {colors["primary"]};
+                width: 48px;
+                height: 48px;
+                border-radius: 32px;
+                border: 3px solid {colors["primary"]};
             }}
             
             QListWidget::indicator:checked {{
@@ -1078,18 +1078,29 @@ class ImageFolderTool(QMainWindow):
     @Slot()
     def update_merge_button_state(self):
         """
-        Update the enabled state of the merge button based on folder selection.
+        Update the enabled state and text of the merge button based on folder selection.
         
         This method checks if there are any checked subfolder items and 
         if a root folder is selected. The merge button is enabled only when
         at least one subfolder is checked and a valid root folder exists.
         
+        The button text is updated to show the count of selected folders.
+        
         Side effects:
             - Changes the enabled state of self.merge_button
+            - Updates the text of self.merge_button with selection count
         """
         checked_items = self.get_checked_subfolder_items()
+        count = len(checked_items)
+        
+        # Update button text to include folder count
+        if count > 0:
+            self.merge_button.setText(f"Merge Selected Folders ({count})")
+        else:
+            self.merge_button.setText("Merge Selected Folders")
+        
         self.merge_button.setEnabled(
-            len(checked_items) > 0 and self.current_root_folder is not None
+            count > 0 and self.current_root_folder is not None
         )
 
     def get_checked_subfolder_items(self):
