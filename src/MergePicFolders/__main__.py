@@ -1,8 +1,11 @@
 import sys
 from PySide6.QtWidgets import QApplication
-from window import ImageFolderTool
+from .window import ImageFolderTool
 
-if __name__ == "__main__":
+def main():
+    """
+    Main function to run the ImageFolderTool application.
+    """
     try:
         app = QApplication(sys.argv)
         window = ImageFolderTool()
@@ -14,3 +17,6 @@ if __name__ == "__main__":
 
         traceback.print_exc()
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

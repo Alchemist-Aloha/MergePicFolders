@@ -22,28 +22,28 @@ A modern GUI tool to manage and merge image folders, built with PySide6.
 
 1. Clone the repository:
    ```
-   git clone https://github.com/Alchemist-Aloha/merge_picfolders.git
-   cd merge_picfolders
+   git clone https://github.com/Alchemist-Aloha/MergePicFolders.git
+   cd MergePicFolders
    ```
 
-2. Install dependencies:
+2. Install the package:
    ```
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 ## Usage
 
 Run the application:
 ```bash
-python src/main.py
+python -m MergePicFolders
 ```
 
 
 ## Project Structure
 
-- `src/main.py` - Application entry point
-- `src/window.py` - Main GUI implementation
-- `src/worker.py` - Background task processing
+- `MergePicFolders/__main__.py` - Application entry point
+- `MergePicFolders/window.py` - Main GUI implementation
+- `MergePicFolders/worker.py` - Background task processing
 
 ## License
 

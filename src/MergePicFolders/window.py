@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPixmap, QIcon, QFont, QImageReader
 from PySide6.QtCore import Qt, QSize, Slot
-from worker import Worker  # Assuming you have a Worker class defined in worker.py
+from .worker import Worker  # Assuming you have a Worker class defined in worker.py
 # --- Configuration ---
 THUMBNAIL_SIZE = QSize(128, 128)
 PREVIEW_AREA_MIN_WIDTH = 400

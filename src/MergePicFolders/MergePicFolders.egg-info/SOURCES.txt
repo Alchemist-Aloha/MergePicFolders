@@ -1,0 +1,9 @@
+LICENSE
+README.md
+setup.py
+src/MergePicFolders.egg-info/PKG-INFO
+src/MergePicFolders.egg-info/SOURCES.txt
+src/MergePicFolders.egg-info/dependency_links.txt
+src/MergePicFolders.egg-info/entry_points.txt
+src/MergePicFolders.egg-info/requires.txt
+src/MergePicFolders.egg-info/top_level.txt

@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: MergePicFolders
+Version: 1.0
+Summary: A modern GUI tool to manage and merge image folders, built with PySide6.
+Home-page: https://github.com/Alchemist-Aloha/MergePicFolders
+Author: Alchemist-Aloha
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+License-File: LICENSE
+Requires-Dist: PySide6
+Dynamic: author
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: summary
