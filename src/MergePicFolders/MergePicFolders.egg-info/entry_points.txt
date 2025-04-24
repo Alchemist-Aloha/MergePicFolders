@@ -1,2 +1,0 @@
-[console_scripts]
-mergepicfolders = MergePicFolders.__main__:main
