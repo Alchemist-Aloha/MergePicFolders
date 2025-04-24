@@ -1,5 +1,5 @@
 /old
-/src/__pycache__/*
+/src/MergePicFolders/__pycache__/*
 
 # filepath: .gitignore
 __pycache__/
