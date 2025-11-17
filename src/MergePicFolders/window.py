@@ -149,7 +149,8 @@ class ImageFolderTool(QMainWindow):
         # Modern subfolder list - INCREASED ICON SIZE
         self.subfolder_list_widget = QListWidget()
         self.subfolder_list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.subfolder_list_widget.currentItemChanged.connect(self.trigger_subfolder_preview)
+        # self.subfolder_list_widget.currentItemChanged.connect(self.trigger_subfolder_preview)
+        self.subfolder_list_widget.itemDoubleClicked.connect(self.trigger_subfolder_preview)
         self.subfolder_list_widget.itemChanged.connect(self.update_merge_button_state)
         self.subfolder_list_widget.setIconSize(QSize(96, 96))  # Increased from 64x64
         
@@ -464,7 +465,7 @@ class ImageFolderTool(QMainWindow):
 
             # --- Temporarily disconnect signal ---
             try:
-                self.subfolder_list_widget.currentItemChanged.disconnect(
+                self.subfolder_list_widget.itemDoubleClicked.disconnect(
                     self.trigger_subfolder_preview
                 )
             except RuntimeError:  # Already disconnected or never connected
@@ -530,7 +531,7 @@ class ImageFolderTool(QMainWindow):
             self.update_merge_button_state()  # Update button state
 
             # --- Reconnect signal ---
-            self.subfolder_list_widget.currentItemChanged.connect(
+            self.subfolder_list_widget.itemDoubleClicked.connect(
                 self.trigger_subfolder_preview
             )
             # ------------------------
@@ -902,7 +903,7 @@ class ImageFolderTool(QMainWindow):
             self.log_message(f"Error in set_folder_thumbnail: {e}")
 
     @Slot(QListWidgetItem, QListWidgetItem)
-    def trigger_subfolder_preview(self, current, previous):
+    def trigger_subfolder_preview(self, current, previous=None):
         '''
         Triggered when the user selects a subfolder from the list.
         This method checks if the selected item is a valid subfolder and starts
