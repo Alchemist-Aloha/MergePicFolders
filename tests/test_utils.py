@@ -1,4 +1,3 @@
-import pytest
 from MergePicFolders.utils import natural_sort_key
 
 def test_natural_sort_key_simple_numbers():
