@@ -41,6 +41,7 @@ class ImageFolderTool(QMainWindow):
         self.last_previewed_folder = None
         self.folder_preview_tasks = {}
         self.folder_preview_cache = {}
+        self.folder_preview_cache_by_name = {}
         self.waiting_folders = []
         self._checked_folder_names_cache = set()
         self.last_merged_sources = []
@@ -490,6 +491,7 @@ class ImageFolderTool(QMainWindow):
                     folder_path_str = str(item.data(Qt.ItemDataRole.UserRole))
                     if folder_path_str in self.folder_preview_cache:
                         del self.folder_preview_cache[folder_path_str]
+                        self.folder_preview_cache_by_name.pop(Path(folder_path_str).name, None)
                     if folder_path_str in self.folder_preview_tasks:
                         # Stop any preview task for the removed folder
                         preview_worker = self.folder_preview_tasks.pop(folder_path_str)
@@ -604,6 +606,7 @@ class ImageFolderTool(QMainWindow):
             self.merge_button.setEnabled(False)
             self.last_previewed_folder = None
             self.folder_preview_cache.clear()
+            self.folder_preview_cache_by_name.clear()
             self.folder_preview_tasks.clear()
             self.waiting_folders.clear()
             self._checked_folder_names_cache.clear()
@@ -663,11 +666,6 @@ class ImageFolderTool(QMainWindow):
         '''
         self.log_message(f"Received {len(subdirs)} subfolders from worker.")
 
-        cached_thumbnails_by_name = {}
-        for folder_path_str, image_path in self.folder_preview_cache.items():
-            folder_name = Path(folder_path_str).name
-            cached_thumbnails_by_name[folder_name] = image_path
-
         if not subdirs:
             self.log_message("No subfolders found by worker.")
             return
@@ -694,8 +692,8 @@ class ImageFolderTool(QMainWindow):
                 count += 1
 
                 folder_path_str = str(subdir)
-                if subdir.name in cached_thumbnails_by_name:
-                    cached_image_path = cached_thumbnails_by_name[subdir.name]
+                if subdir.name in self.folder_preview_cache_by_name:
+                    cached_image_path = self.folder_preview_cache_by_name[subdir.name]
                     if os.path.isfile(cached_image_path) and os.access(
                         cached_image_path, os.R_OK
                     ):
@@ -705,6 +703,7 @@ class ImageFolderTool(QMainWindow):
                         folders_needing_thumbnails.append((subdir, item))
                         if folder_path_str in self.folder_preview_cache:
                             del self.folder_preview_cache[folder_path_str]
+                        self.folder_preview_cache_by_name.pop(subdir.name, None)
                 else:
                     folders_needing_thumbnails.append((subdir, item))
 
@@ -844,6 +843,7 @@ class ImageFolderTool(QMainWindow):
         """
         try:
             self.folder_preview_cache[folder_path_str] = image_path_str
+            self.folder_preview_cache_by_name[Path(folder_path_str).name] = image_path_str
 
             if not os.path.isfile(image_path_str) or not os.access(
                 image_path_str, os.R_OK
