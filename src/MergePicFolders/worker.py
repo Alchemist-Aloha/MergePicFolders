@@ -1,4 +1,3 @@
-from PySide6.QtWidgets import QApplication
 import time
 import os
 import shutil
@@ -200,7 +199,6 @@ class Worker(QThread):
                     if len(paths_to_emit) >= 50:
                         self.image_paths.emit(paths_to_emit)  # Emit batch
                         paths_to_emit = []
-                        QApplication.processEvents()
 
             if paths_to_emit:  # Emit any remaining paths
                 self.image_paths.emit(paths_to_emit)
@@ -365,11 +363,8 @@ class Worker(QThread):
                             skipped_count += 1
 
                     processed_items_in_source += 1
-                    if processed_items_in_source % 20 == 0:
-                        QApplication.processEvents()
 
                 processed_sources.append(source_folder)
-                QApplication.processEvents()
 
             # --- Optional Deletion of Empty Source Folders ---
             self.progress.emit("Checking source folders for deletion...")
