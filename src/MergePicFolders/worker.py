@@ -4,6 +4,7 @@ import os
 import shutil
 from PySide6.QtCore import QThread, Signal
 from pathlib import Path
+
 # --- Configuration ---
 SUPPORTED_IMAGE_EXTENSIONS = {
     ".png",
@@ -14,8 +15,10 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
     ".webp",
-    ".heic"
+    ".heic",
 }
+
+
 # --- Worker Thread for Background Tasks ---
 class Worker(QThread):
     progress = Signal(str)
@@ -37,20 +40,20 @@ class Worker(QThread):
     ):
         """
         Initialize a worker thread for background processing tasks.
-        
+
         This worker can handle multiple task types including scanning folders for images,
         generating folder previews, populating subfolder lists, and merging subfolders.
-        
+
         Args:
             task_type (str): Type of task to perform. Valid values are:
-                "scan_subfolder_images", "get_folder_preview", 
+                "scan_subfolder_images", "get_folder_preview",
                 "populate_subfolders", "merge_subs"
             folder_to_scan (str, optional): Path to folder to scan for images or previews.
             source_folder_paths (list, optional): List of folder paths to merge from.
             target_folder_path (str, optional): Target folder path for merge operation.
             root_folder_to_scan (str, optional): Root folder to scan for subfolders.
             parent (QObject, optional): Parent object for the thread.
-            
+
         Note:
             The worker uses signals to communicate progress, errors and results back
             to the main thread. Different tasks require different parameters.
@@ -58,7 +61,9 @@ class Worker(QThread):
         super().__init__(parent)
         self.task_type = task_type
         self.folder_to_scan = Path(folder_to_scan) if folder_to_scan else None
-        self.root_folder_to_scan = Path(root_folder_to_scan) if root_folder_to_scan else None
+        self.root_folder_to_scan = (
+            Path(root_folder_to_scan) if root_folder_to_scan else None
+        )
         self.source_merge_folders = (
             [Path(p) for p in source_folder_paths] if source_folder_paths else []
         )
@@ -71,14 +76,14 @@ class Worker(QThread):
     def run(self):
         """
         Execute the worker task based on the task_type.
-        
+
         This method is automatically called when the thread starts. It determines
         which operation to perform based on the task_type and available parameters,
         then executes the appropriate task method.
-        
+
         The method handles all exceptions and reports errors via signals.
         It also tracks and reports the success status of the task.
-        
+
         Side effects:
             - Emits progress, error, and other task-specific signals during execution
             - Sets the internal success flag based on task completion
@@ -116,7 +121,9 @@ class Worker(QThread):
                     self.task_type == "populate_subfolders"
                     and not self.root_folder_to_scan
                 ):
-                    self.error.emit("Populate task started with no root folder provided.")
+                    self.error.emit(
+                        "Populate task started with no root folder provided."
+                    )
                 elif self.task_type == "merge_subs" and (
                     not self.target_merge_folder or not self.source_merge_folders
                 ):
@@ -140,11 +147,11 @@ class Worker(QThread):
     def stop(self):
         """
         Request the worker thread to stop execution.
-        
+
         This method sets a flag that causes task methods to exit their
         processing loops when checked. It doesn't immediately terminate
         the thread but allows it to exit cleanly.
-        
+
         Side effects:
             - Sets internal _is_running flag to False
             - Emits a progress signal indicating cancellation was requested
@@ -155,19 +162,19 @@ class Worker(QThread):
     def _scan_folder_for_images(self, folder_path):
         """
         Scan a specific folder recursively for image files.
-        
+
         This method searches the specified folder and all its subfolders
         for image files with supported extensions. Found images are emitted
         in batches using the image_paths signal.
-        
+
         Args:
             folder_path (Path): Path object representing the folder to scan
-            
+
         Side effects:
             - Emits progress updates during scanning
             - Emits image_paths signal with batches of found image paths
             - Emits error signal if scanning fails
-            
+
         Raises:
             Exception: Re-raises any exceptions after reporting them via error signal
         """
@@ -205,42 +212,58 @@ class Worker(QThread):
             self.error.emit(f"Error during scan of '{folder_path.name}': {e}")
             raise  # Re-raise to indicate failure to the run() method
 
-    def _generate_unique_target_path(self, source_path, target_folder):
+    def _generate_unique_target_path(
+        self, source_path, target_folder, existing_names=None
+    ):
         """
         Generate a unique path in the target folder for a source file.
-        
+
         If the target path already exists, this method appends a counter or
         timestamp to the filename to make it unique and avoid overwriting.
-        
+
         Args:
             source_path (Path): Path object representing the source file
             target_folder (Path): Path object representing the target folder
-            
+            existing_names (set, optional): Set of existing filenames in the target folder.
+                Providing this significantly speeds up uniqueness checks.
+
         Returns:
             Path: A unique Path object for the target file, or None if a unique
                  name cannot be generated after 1000 attempts
-                 
+
         Note:
             This method implements a collision resolution strategy where it first
             tries to append incremental numbers, then falls back to a timestamp
             if needed.
         """
-        target_path = target_folder / source_path.name
-        if not target_path.exists():
+        name = source_path.name
+
+        def exists(name_to_check, path_to_check):
+            if existing_names is not None:
+                return name_to_check in existing_names
+            return path_to_check.exists()
+
+        target_path = target_folder / name
+        if not exists(name, target_path):
             return target_path  # Path is already unique
 
         # Collision detected, generate a new name
         counter = 1
         stem = source_path.stem
         suffix = source_path.suffix
-        while target_path.exists():
-            target_path = target_folder / f"{stem}_{counter}{suffix}"
+
+        while True:
+            new_name = f"{stem}_{counter}{suffix}"
+            target_path = target_folder / new_name
+            if not exists(new_name, target_path):
+                break
             counter += 1
             if counter > 1000:  # Safety break
                 # Extremely unlikely, use timestamp as fallback
                 timestamp = int(time.time() * 1000)
-                target_path = target_folder / f"{stem}_{timestamp}{suffix}"
-                if target_path.exists():  # If STILL exists, give up
+                new_name = f"{stem}_{timestamp}{suffix}"
+                target_path = target_folder / new_name
+                if exists(new_name, target_path):  # If STILL exists, give up
                     return None  # Indicate failure to find unique name
                 break  # Exit loop with timestamp name
         return target_path
@@ -248,18 +271,18 @@ class Worker(QThread):
     def _merge_subfolders_to_target(self):
         """
         Move content from source folders into the target folder.
-        
+
         This method processes all source folders, moving their files to the target
         folder while handling name conflicts. After moving files, it optionally
         deletes empty source directories.
-        
+
         Side effects:
             - Moves files from source folders to target folder
             - May delete empty directories in source folders
             - Emits progress updates during merge operation
             - Emits error signal for any issues encountered
             - Updates the internal success flag based on outcome
-            
+
         Note:
             This method carefully tracks statistics about the merge operation
             including moved files, skipped files, and deleted directories.
@@ -284,6 +307,11 @@ class Worker(QThread):
             return  # Critical error if target wasn't created
 
         try:
+            # Pre-calculate existing filenames in target to optimize unique name generation
+            existing_target_names = set(
+                p.name for p in self.target_merge_folder.iterdir()
+            )
+
             for source_folder in self.source_merge_folders:
                 if not self._is_running:
                     self.progress.emit(
@@ -309,7 +337,9 @@ class Worker(QThread):
                     if item_path.is_file():  # Only move files
                         source_path = item_path
                         target_path = self._generate_unique_target_path(
-                            source_path, self.target_merge_folder
+                            source_path,
+                            self.target_merge_folder,
+                            existing_names=existing_target_names,
                         )
 
                         if target_path is None:
@@ -321,6 +351,7 @@ class Worker(QThread):
 
                         try:
                             shutil.move(str(source_path), str(target_path))
+                            existing_target_names.add(target_path.name)
                             self.progress.emit(
                                 f"Moved: {source_path.name} -> {target_path.name} (into {self.target_merge_folder.name})"
                             )
@@ -392,24 +423,24 @@ class Worker(QThread):
     def _get_folder_preview_image(self, folder_path):
         """
         Find the first suitable image in a folder to use as a preview thumbnail.
-        
+
         This method searches for image files in the specified folder and up to
         2 levels of subfolders. It returns the first valid image found that can
         be accessed and has a non-zero size.
-        
+
         The search follows this pattern:
         1. Look for images in the immediate folder
         2. If none found, search one level of subfolders
         3. If still none found, search two levels of subfolders
-        
+
         Args:
             folder_path (Path): Path object representing the folder to search for preview images
-            
+
         Side effects:
             - Emits folder_preview_image signal with the folder path and the found image path
             - Emits progress updates for certain conditions
             - Emits error signal if the folder is invalid or errors occur
-            
+
         Note:
             This method only processes files with extensions defined in SUPPORTED_IMAGE_EXTENSIONS.
             It skips files that cannot be accessed due to permissions or other I/O errors.
@@ -467,19 +498,19 @@ class Worker(QThread):
     def _populate_subfolders(self, root_folder_path):
         """
         Scan the root folder for immediate subdirectories.
-        
+
         This method iterates through the contents of the root folder and
         collects all directory entries, emitting them via the subfolders_found signal.
         It does not recursively search for subdirectories beyond the first level.
-        
+
         Args:
             root_folder_path (Path): Path object representing the root folder to scan
-            
+
         Side effects:
             - Emits progress updates at start and completion
             - Emits subfolders_found signal with list of Path objects
             - Emits error signal if the folder is invalid or errors occur
-            
+
         Raises:
             Exception: Re-raises any exceptions after reporting them via error signal
         """
