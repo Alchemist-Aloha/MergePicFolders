@@ -454,8 +454,6 @@ class Worker(QThread):
             return
 
         try:
-            # self.progress.emit(f"Finding preview image for '{folder_path.name}'...")
-
             for item in folder_path.glob("*"):
                 if not self._is_running:
                     return
