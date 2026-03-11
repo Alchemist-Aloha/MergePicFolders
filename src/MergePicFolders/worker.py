@@ -239,8 +239,10 @@ class Worker(QThread):
         name = source_path.name
 
         def exists(name_to_check, path_to_check):
-            if existing_names is not None:
-                return name_to_check in existing_names
+            if existing_names is not None and name_to_check in existing_names:
+                # Fast path: known existing name
+                return True
+            # Fallback to filesystem check to handle case-insensitive filesystems
             return path_to_check.exists()
 
         target_path = target_folder / name
