@@ -21,8 +21,8 @@ def test_unique_target_path(worker, num_files, num_conflicts):
             source_path = Path("source_dir") / source_name
             target_path = worker._generate_unique_target_path(source_path, target_dir, existing_names)
             if target_path:
-                 target_path.touch()
-                 existing_names.add(target_path.name)
+                target_path.touch()
+                existing_names.add(target_path.name)
 
         end_time = time.time()
 
