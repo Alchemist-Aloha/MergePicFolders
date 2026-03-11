@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QIcon, QFont, QImageReader
 from PySide6.QtCore import Qt, QSize, Slot
 from .worker import Worker  # Assuming you have a Worker class defined in worker.py
+from .utils import natural_sort_key
+
 # --- Configuration ---
 THUMBNAIL_SIZE = QSize(128, 128)
 PREVIEW_AREA_MIN_WIDTH = 400
@@ -1426,7 +1428,7 @@ class ImageFolderTool(QMainWindow):
         Example:
             "folder10" will be sorted after "folder2" when using this key
         """
-        return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+        return natural_sort_key(text)
 
     def closeEvent(self, event):
         """
