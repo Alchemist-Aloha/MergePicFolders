@@ -41,6 +41,7 @@ class ImageFolderTool(QMainWindow):
         self.last_previewed_folder = None
         self.folder_preview_tasks = {}
         self.folder_preview_cache = {}
+        self.subfolder_items_cache = {}
         self.waiting_folders = []
         self._checked_folder_names_cache = set()
         self.last_merged_sources = []
@@ -495,6 +496,8 @@ class ImageFolderTool(QMainWindow):
                         preview_worker = self.folder_preview_tasks.pop(folder_path_str)
                         if preview_worker and preview_worker.isRunning():
                             preview_worker.stop()
+                    if folder_path_str in getattr(self, 'subfolder_items_cache', {}):
+                        del self.subfolder_items_cache[folder_path_str]
 
                 # Add target item (if it's directly under the root)
                 if self.last_merged_target.parent == self.current_root_folder:
@@ -508,6 +511,8 @@ class ImageFolderTool(QMainWindow):
                     )
                     target_item.setCheckState(Qt.CheckState.Unchecked)
                     self.subfolder_list_widget.addItem(target_item)
+                    if hasattr(self, 'subfolder_items_cache'):
+                        self.subfolder_items_cache[str(self.last_merged_target)] = target_item
                     # Optionally request its thumbnail immediately
                     self.request_folder_preview(self.last_merged_target, target_item)
 
@@ -600,6 +605,7 @@ class ImageFolderTool(QMainWindow):
             self.log_message(f"Root folder selected: {self.current_root_folder}")
 
             self.subfolder_list_widget.clear()
+            self.subfolder_items_cache.clear()
             self.clear_preview_area()
             self.merge_button.setEnabled(False)
             self.last_previewed_folder = None
@@ -631,6 +637,7 @@ class ImageFolderTool(QMainWindow):
                 self._checked_folder_names_cache.add(item.text())
 
         self.subfolder_list_widget.clear()
+        self.subfolder_items_cache.clear()
         self.log_message("Starting subfolder population task...")
         self.enable_ui(False)
 
@@ -691,6 +698,7 @@ class ImageFolderTool(QMainWindow):
                 else:
                     item.setCheckState(Qt.CheckState.Unchecked)
                 self.subfolder_list_widget.addItem(item)
+                self.subfolder_items_cache[str(subdir)] = item
                 count += 1
 
                 folder_path_str = str(subdir)
@@ -852,48 +860,35 @@ class ImageFolderTool(QMainWindow):
                 return
 
             found_item = False
-            for i in range(self.subfolder_list_widget.count()):
+            item = getattr(self, 'subfolder_items_cache', {}).get(folder_path_str)
+            if item:
+                found_item = True
                 try:
-                    item = self.subfolder_list_widget.item(i)
-                    if not item:
-                        continue
+                    reader = QImageReader(image_path_str)
+                    reader.setScaledSize(QSize(64, 64))
 
-                    item_folder = item.data(Qt.ItemDataRole.UserRole)
-                    if not item_folder:
-                        continue
-
-                    if str(item_folder) == folder_path_str:
-                        found_item = True
-                        try:
-                            reader = QImageReader(image_path_str)
-                            reader.setScaledSize(QSize(64, 64))
-
-                            if reader.canRead():
-                                thumbnail = reader.read()
-                                if not thumbnail.isNull():
-                                    pixmap = QPixmap.fromImage(thumbnail)
-                                    if not pixmap.isNull():
-                                        item.setIcon(QIcon(pixmap))
-                                    else:
-                                        self.log_message(
-                                            f"Created null pixmap for {Path(image_path_str).name}"
-                                        )
-                                else:
-                                    self.log_message(
-                                        f"Image read failed: {Path(image_path_str).name}: {reader.errorString()}"
-                                    )
+                    if reader.canRead():
+                        thumbnail = reader.read()
+                        if not thumbnail.isNull():
+                            pixmap = QPixmap.fromImage(thumbnail)
+                            if not pixmap.isNull():
+                                item.setIcon(QIcon(pixmap))
                             else:
                                 self.log_message(
-                                    f"Cannot read image: {Path(image_path_str).name}: {reader.errorString()}"
+                                    f"Created null pixmap for {Path(image_path_str).name}"
                                 )
-                        except Exception as thumbnail_error:
+                        else:
                             self.log_message(
-                                f"Error creating thumbnail: {thumbnail_error}"
+                                f"Image read failed: {Path(image_path_str).name}: {reader.errorString()}"
                             )
-                        break
-                except Exception as item_error:
-                    self.log_message(f"Error processing list item: {item_error}")
-                    continue
+                    else:
+                        self.log_message(
+                            f"Cannot read image: {Path(image_path_str).name}: {reader.errorString()}"
+                        )
+                except Exception as thumbnail_error:
+                    self.log_message(
+                        f"Error creating thumbnail: {thumbnail_error}"
+                    )
 
             if not found_item:
                 self.log_message(
