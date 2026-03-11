@@ -12,10 +12,14 @@ def natural_sort_key(text):
         text (str): The text to convert to a natural sort key
 
     Returns:
-        list: A list where numeric segments are converted to integers,
+        list: A list of tagged tuples ``(segment_type, value)`` where
+              ``segment_type`` distinguishes text (0) from numbers (1),
               suitable for use as a sort key
 
     Example:
         "folder10" will be sorted after "folder2" when using this key
     """
-    return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+    return [
+        (1, int(part)) if part.isdigit() else (0, part.lower())
+        for part in re.split(r'(\d+)', text)
+    ]
