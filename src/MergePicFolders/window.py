@@ -472,8 +472,8 @@ class ImageFolderTool(QMainWindow):
                 self.subfolder_list_widget.itemDoubleClicked.disconnect(
                     self.trigger_subfolder_preview
                 )
-            except RuntimeError:  # Already disconnected or never connected
-                pass
+            except RuntimeError as e:  # Already disconnected or never connected
+                self.log_message(f"Note: Signal disconnect failed ({e})")
             # ------------------------------------
 
             if success and self.last_merged_target and self.last_merged_sources:
