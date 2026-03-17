@@ -30,6 +30,7 @@ MANIFEST
 # Environments
 .env
 .venv
+.uv
 env/
 venv/
 ENV/

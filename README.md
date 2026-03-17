@@ -15,28 +15,46 @@ A modern GUI tool to manage and merge image folders, built with PySide6.
 
 ## Requirements
 
-- Python 3
-- PySide6 (Qt for Python)
+- Python 3.8+
+- [uv](https://github.com/astral-sh/uv) (recommended) or PySide6
 
-## Installation
+## Installation & Usage
+
+### Using uv (Recommended)
 
 1. Clone the repository:
-   ```
+   ```bash
    git clone https://github.com/Alchemist-Aloha/MergePicFolders.git
    cd MergePicFolders
    ```
 
-2. Install the package:
+2. Run the application directly:
+   ```bash
+   uv run mergepicfolders
    ```
+
+   Or run with the module path:
+   ```bash
+   uv run python -m MergePicFolders
+   ```
+
+### Using pip
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Alchemist-Aloha/MergePicFolders.git
+   cd MergePicFolders
+   ```
+
+2. Install the package in editable mode:
+   ```bash
    pip install -e .
    ```
 
-## Usage
-
-Run the application:
-```bash
-python -m MergePicFolders
-```
+3. Run the application:
+   ```bash
+   python -m MergePicFolders
+   ```
 
 
 ## Project Structure

@@ -21,18 +21,18 @@ def test_natural_sort_key_no_numbers():
     assert natural_sort_key("abc") < natural_sort_key("def")
 
 def test_natural_sort_key_empty_string():
-    assert natural_sort_key("") == [""]
+    assert natural_sort_key("") == [(0, "")]
 
 def test_natural_sort_key_only_numbers():
-    assert natural_sort_key("123") == ["", 123, ""]
+    assert natural_sort_key("123") == [(0, ""), (1, 123), (0, "")]
 
 def test_natural_sort_list_sorting():
     items = ["file10.txt", "file2.txt", "file1.txt", "FILE1.txt"]
     sorted_items = sorted(items, key=natural_sort_key)
     # Expected: file1.txt and FILE1.txt will be equal in terms of sort key,
     # but their relative order will be preserved if using stable sort.
-    # Actually, natural_sort_key("file1.txt") == ["file", 1, ".txt"]
-    # and natural_sort_key("FILE1.txt") == ["file", 1, ".txt"]
+    # Actually, natural_sort_key("file1.txt") == [(0, "file"), (1, 1), (0, ".txt")]
+    # and natural_sort_key("FILE1.txt") == [(0, "file"), (1, 1), (0, ".txt")]
     assert sorted_items[0].lower() == "file1.txt"
     assert sorted_items[1].lower() == "file1.txt"
     assert sorted_items[2] == "file2.txt"
